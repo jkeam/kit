@@ -43,3 +43,5 @@ workspace/memory/*.md
 # Temporary files
 *.tmp
 *.bak
+
+ignore
