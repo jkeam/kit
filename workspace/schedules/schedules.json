@@ -1,0 +1,12 @@
+[
+  {
+    "id": "sched_1",
+    "cron": "0 9 * * *",
+    "task": "top -l 1",
+    "description": "Check system memory usage daily at 9am",
+    "created_at": "2026-07-17T11:55:16.289100",
+    "enabled": true,
+    "last_run": null,
+    "run_count": 0
+  }
+]

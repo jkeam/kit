@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+.venv/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Environment
+.env
+
+# Logs
+*.log
+llama-stack.log
+ramalama.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+!.claude/settings.json
+
+# Phase documentation
+PHASE*.md
+
+# Workspace memory (keep committed for persistence)
+# workspace/memory/*.md
+
+# Temporary files
+*.tmp
+*.bak

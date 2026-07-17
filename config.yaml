@@ -1,0 +1,34 @@
+# Gateway Configuration
+gateway:
+  port: 18789
+  auth_token: ${GATEWAY_TOKEN}  # Optional, set in .env
+
+# LLM Stack Connection
+llama_stack:
+  base_url: http://localhost:8321
+  default_model: qwen3-14b
+
+# Memory Configuration
+memory:
+  vector_provider: none  # Phase 1: no vector search yet
+  embedding_model: text-embedding-3-small
+  daily_log_retention: 7  # days
+
+# Tools Configuration
+tools:
+  enabled:
+    - file_ops
+    - shell_exec
+    - memory
+
+  safety:
+    shell_confirm_destructive: true
+    allowed_commands: []  # Empty = all allowed (use with caution)
+
+# Channels (Phase 2 - disabled for now)
+channels:
+  - cli
+  # - telegram:
+  #     bot_token: ${TELEGRAM_BOT_TOKEN}
+  # - discord:
+  #     bot_token: ${DISCORD_BOT_TOKEN}

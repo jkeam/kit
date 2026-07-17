@@ -1,0 +1,216 @@
+/* Custom styles for Personal Assistant with PatternFly */
+
+/* Chat Messages */
+.chat-card-body {
+    min-height: 500px;
+    max-height: calc(100vh - 400px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-messages {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+}
+
+.message {
+    padding: 12px 16px;
+    border-radius: 8px;
+    max-width: 80%;
+}
+
+.message.user {
+    background: var(--pf-v5-global--primary-color--100);
+    color: white;
+    align-self: flex-end;
+    margin-left: auto;
+}
+
+.message.assistant {
+    background: var(--pf-v5-global--BackgroundColor--200);
+    align-self: flex-start;
+}
+
+.message.system {
+    background: var(--pf-v5-global--BackgroundColor--300);
+    align-self: center;
+    font-size: 13px;
+    color: var(--pf-v5-global--Color--200);
+    max-width: 100%;
+    text-align: center;
+}
+
+.message-content {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.message-time {
+    font-size: 11px;
+    opacity: 0.7;
+    margin-top: 4px;
+}
+
+/* Info Panel */
+.info-card-body {
+    min-height: 500px;
+    max-height: calc(100vh - 400px);
+    overflow-y: auto;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.pf-m-current {
+    display: block;
+}
+
+/* Tab switching */
+.pf-v5-c-tabs__item.pf-m-current .pf-v5-c-tabs__link {
+    border-bottom-color: var(--pf-v5-global--primary-color--100);
+}
+
+/* Sessions */
+.session-card {
+    padding: 16px;
+    margin-bottom: 12px;
+    background: var(--pf-v5-global--BackgroundColor--200);
+    border-radius: 4px;
+    border-left: 4px solid var(--pf-v5-global--primary-color--100);
+}
+
+.session-card h4 {
+    font-size: 16px;
+    margin-bottom: 8px;
+}
+
+.session-card p {
+    font-size: 14px;
+    color: var(--pf-v5-global--Color--200);
+    margin: 4px 0;
+}
+
+/* Memory Results */
+.memory-item {
+    padding: 12px;
+    margin-bottom: 12px;
+    background: var(--pf-v5-global--BackgroundColor--200);
+    border-radius: 4px;
+}
+
+.memory-item-type {
+    font-size: 12px;
+    color: var(--pf-v5-global--primary-color--100);
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+
+.memory-item-content {
+    font-size: 14px;
+    white-space: pre-wrap;
+}
+
+/* Connection status label */
+#connection-status.pf-m-green {
+    --pf-v5-c-label--m-green--BackgroundColor: var(--pf-v5-global--success-color--100);
+}
+
+/* Empty States */
+.empty-state {
+    text-align: center;
+    color: var(--pf-v5-global--Color--200);
+    padding: 40px 20px;
+}
+
+/* Thinking indicator */
+#thinking-indicator {
+    opacity: 0.8;
+}
+
+#thinking-indicator .message-content {
+    display: flex;
+    align-items: center;
+}
+
+/* PatternFly spinner animation */
+.pf-v5-c-spinner {
+    display: inline-flex;
+    width: var(--pf-v5-c-spinner--diameter);
+    height: var(--pf-v5-c-spinner--diameter);
+    --pf-v5-c-spinner--diameter: 1.5rem;
+}
+
+.pf-v5-c-spinner__clipper,
+.pf-v5-c-spinner__lead-ball,
+.pf-v5-c-spinner__tail-ball {
+    display: block;
+    position: absolute;
+    width: var(--pf-v5-c-spinner--diameter);
+    height: var(--pf-v5-c-spinner--diameter);
+}
+
+.pf-v5-c-spinner__clipper {
+    border-radius: 50%;
+    border: 3px solid transparent;
+    border-top-color: var(--pf-v5-global--primary-color--100);
+    animation: pf-v5-c-spinner 1s linear infinite;
+}
+
+.pf-v5-c-spinner__lead-ball,
+.pf-v5-c-spinner__tail-ball {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--pf-v5-global--primary-color--100);
+}
+
+.pf-v5-c-spinner__lead-ball {
+    animation: pf-v5-c-spinner-lead-ball 1s ease-in-out infinite;
+}
+
+.pf-v5-c-spinner__tail-ball {
+    animation: pf-v5-c-spinner-tail-ball 1s ease-in-out infinite;
+}
+
+@keyframes pf-v5-c-spinner {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes pf-v5-c-spinner-lead-ball {
+    0%, 100% {
+        transform: translate(0, 0);
+        opacity: 1;
+    }
+    50% {
+        transform: translate(8px, 0);
+        opacity: 0.5;
+    }
+}
+
+@keyframes pf-v5-c-spinner-tail-ball {
+    0%, 100% {
+        transform: translate(0, 0);
+        opacity: 0.5;
+    }
+    50% {
+        transform: translate(-8px, 0);
+        opacity: 1;
+    }
+}
+
+/* Responsive Grid */
+@media (max-width: 768px) {
+    .pf-v5-l-grid__item.pf-m-6-col {
+        grid-column: span 12;
+    }
+}

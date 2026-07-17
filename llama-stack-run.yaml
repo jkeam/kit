@@ -1,0 +1,25 @@
+# LlamaStack (soon to be OGX) Server Configuration
+# Connects to RedHat Model-as-a-Service (MaaS)
+
+version: 2
+distro_name: self-hosted-server
+
+# Provider configuration - RedHat MaaS (OpenAI-compatible API)
+providers:
+  inference:
+    - provider_id: openai
+      provider_type: remote::openai
+      config:
+        base_url: https://api.openai.com/v1
+        api_key: sk-proj-this_is_fake_replace_me_with_a_real_key
+
+# Model definitions
+models:
+  - metadata:
+      model_id: gpt-5.6-sol
+    provider_id: openai
+
+# Server settings
+server:
+  port: 8321
+  host: 127.0.0.1

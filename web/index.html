@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kit - Your AI Toolkit</title>
+
+    <!-- PatternFly CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/@patternfly/patternfly@5/patternfly.css">
+    <link rel="stylesheet" href="https://unpkg.com/@patternfly/patternfly@5/patternfly-addons.css">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Page Header -->
+    <div class="pf-v5-c-page">
+        <header class="pf-v5-c-masthead">
+            <div class="pf-v5-c-masthead__main">
+                <div class="pf-v5-c-masthead__brand">
+                    <a class="pf-v5-c-masthead__brand-link" href="#">
+                        <span class="pf-v5-c-brand" style="font-size: 1.5rem; font-weight: 600;">
+                            🧰 Kit
+                        </span>
+                    </a>
+                </div>
+            </div>
+            <div class="pf-v5-c-masthead__content">
+                <div class="pf-v5-l-flex pf-m-align-items-center pf-m-gap-md">
+                    <div class="pf-v5-l-flex__item">
+                        <span id="connection-status" class="pf-v5-c-label pf-m-red">
+                            <span class="pf-v5-c-label__content">
+                                <span class="pf-v5-c-label__icon">
+                                    <i class="fas fa-circle"></i>
+                                </span>
+                                <span id="connection-text">Disconnected</span>
+                            </span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="pf-v5-c-page__main">
+            <section class="pf-v5-c-page__main-section">
+                <div class="pf-v5-l-grid pf-m-gutter">
+                    <!-- Chat Panel (Left) -->
+                    <div class="pf-v5-l-grid__item pf-m-6-col">
+                        <div class="pf-v5-c-card">
+                            <div class="pf-v5-c-card__header">
+                                <div class="pf-v5-c-card__header-main">
+                                    <h2 class="pf-v5-c-card__title">Chat</h2>
+                                </div>
+                                <div class="pf-v5-c-card__actions">
+                                    <span class="pf-v5-c-label pf-m-blue">
+                                        <span class="pf-v5-c-label__content">
+                                            <span id="session-id">web:browser</span>
+                                        </span>
+                                    </span>
+                                    <span class="pf-v5-c-label pf-m-outline" style="margin-left: 8px;">
+                                        <span class="pf-v5-c-label__content">
+                                            <span id="message-count">0 messages</span>
+                                        </span>
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="pf-v5-c-card__body chat-card-body">
+                                <div id="chat-messages" class="chat-messages"></div>
+                            </div>
+                            <div class="pf-v5-c-card__footer">
+                                <div class="pf-v5-c-input-group">
+                                    <textarea
+                                        id="chat-input"
+                                        class="pf-v5-c-form-control"
+                                        placeholder="Type your message..."
+                                        rows="2"
+                                    ></textarea>
+                                    <button id="send-button" class="pf-v5-c-button pf-m-primary">
+                                        Send
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Info Panel (Right) -->
+                    <div class="pf-v5-l-grid__item pf-m-6-col">
+                        <div class="pf-v5-c-card">
+                            <div class="pf-v5-c-card__header">
+                                <div class="pf-v5-c-tabs pf-m-box" id="info-tabs">
+                                    <ul class="pf-v5-c-tabs__list">
+                                        <li class="pf-v5-c-tabs__item pf-m-current">
+                                            <button class="pf-v5-c-tabs__link" data-tab="sessions">
+                                                <span class="pf-v5-c-tabs__item-text">Sessions</span>
+                                            </button>
+                                        </li>
+                                        <li class="pf-v5-c-tabs__item">
+                                            <button class="pf-v5-c-tabs__link" data-tab="memory">
+                                                <span class="pf-v5-c-tabs__item-text">Memory</span>
+                                            </button>
+                                        </li>
+                                        <li class="pf-v5-c-tabs__item">
+                                            <button class="pf-v5-c-tabs__link" data-tab="tools">
+                                                <span class="pf-v5-c-tabs__item-text">Tools</span>
+                                            </button>
+                                        </li>
+                                        <li class="pf-v5-c-tabs__item">
+                                            <button class="pf-v5-c-tabs__link" data-tab="schedules">
+                                                <span class="pf-v5-c-tabs__item-text">Schedules</span>
+                                            </button>
+                                        </li>
+                                        <li class="pf-v5-c-tabs__item">
+                                            <button class="pf-v5-c-tabs__link" data-tab="skills">
+                                                <span class="pf-v5-c-tabs__item-text">Skills</span>
+                                            </button>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="pf-v5-c-card__body info-card-body">
+                                <!-- Sessions Tab -->
+                                <div id="sessions-tab" class="tab-content pf-m-current">
+                                    <div id="sessions-list"></div>
+                                </div>
+
+                                <!-- Memory Tab -->
+                                <div id="memory-tab" class="tab-content">
+                                    <div class="pf-v5-c-input-group" style="margin-bottom: 1rem;">
+                                        <input
+                                            id="memory-search-input"
+                                            class="pf-v5-c-form-control"
+                                            type="text"
+                                            placeholder="Search memories..."
+                                        >
+                                        <button id="memory-search-btn" class="pf-v5-c-button pf-m-primary">
+                                            Search
+                                        </button>
+                                    </div>
+                                    <div id="memory-results"></div>
+                                </div>
+
+                                <!-- Tools Tab -->
+                                <div id="tools-tab" class="tab-content">
+                                    <div class="pf-v5-c-description-list">
+                                        <div class="pf-v5-c-description-list__group">
+                                            <dt class="pf-v5-c-description-list__term">
+                                                <span class="pf-v5-c-description-list__text">File Operations</span>
+                                            </dt>
+                                            <dd class="pf-v5-c-description-list__description">
+                                                <div class="pf-v5-c-description-list__text">read, write, list_files</div>
+                                            </dd>
+                                        </div>
+                                        <div class="pf-v5-c-description-list__group">
+                                            <dt class="pf-v5-c-description-list__term">
+                                                <span class="pf-v5-c-description-list__text">Memory</span>
+                                            </dt>
+                                            <dd class="pf-v5-c-description-list__description">
+                                                <div class="pf-v5-c-description-list__text">memory_write, memory_get, memory_search</div>
+                                            </dd>
+                                        </div>
+                                        <div class="pf-v5-c-description-list__group">
+                                            <dt class="pf-v5-c-description-list__term">
+                                                <span class="pf-v5-c-description-list__text">Web</span>
+                                            </dt>
+                                            <dd class="pf-v5-c-description-list__description">
+                                                <div class="pf-v5-c-description-list__text">web_search, web_fetch</div>
+                                            </dd>
+                                        </div>
+                                        <div class="pf-v5-c-description-list__group">
+                                            <dt class="pf-v5-c-description-list__term">
+                                                <span class="pf-v5-c-description-list__text">Browser</span>
+                                            </dt>
+                                            <dd class="pf-v5-c-description-list__description">
+                                                <div class="pf-v5-c-description-list__text">browser_screenshot, browser_navigate, browser_extract</div>
+                                            </dd>
+                                        </div>
+                                        <div class="pf-v5-c-description-list__group">
+                                            <dt class="pf-v5-c-description-list__term">
+                                                <span class="pf-v5-c-description-list__text">Scheduling</span>
+                                            </dt>
+                                            <dd class="pf-v5-c-description-list__description">
+                                                <div class="pf-v5-c-description-list__text">schedule_create, schedule_list, schedule_delete</div>
+                                            </dd>
+                                        </div>
+                                        <div class="pf-v5-c-description-list__group">
+                                            <dt class="pf-v5-c-description-list__term">
+                                                <span class="pf-v5-c-description-list__text">Skills</span>
+                                            </dt>
+                                            <dd class="pf-v5-c-description-list__description">
+                                                <div class="pf-v5-c-description-list__text">skill_create, skill_list, skill_execute, skill_improve, skill_delete, skill_info</div>
+                                            </dd>
+                                        </div>
+                                        <div class="pf-v5-c-description-list__group">
+                                            <dt class="pf-v5-c-description-list__term">
+                                                <span class="pf-v5-c-description-list__text">System</span>
+                                            </dt>
+                                            <dd class="pf-v5-c-description-list__description">
+                                                <div class="pf-v5-c-description-list__text">exec_shell</div>
+                                            </dd>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Schedules Tab -->
+                                <div id="schedules-tab" class="tab-content">
+                                    <button id="refresh-schedules" class="pf-v5-c-button pf-m-secondary" style="margin-bottom: 1rem;">
+                                        Refresh
+                                    </button>
+                                    <div id="schedules-list"></div>
+                                </div>
+
+                                <!-- Skills Tab -->
+                                <div id="skills-tab" class="tab-content">
+                                    <button id="refresh-skills" class="pf-v5-c-button pf-m-secondary" style="margin-bottom: 1rem;">
+                                        Refresh
+                                    </button>
+                                    <div id="skills-list"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
