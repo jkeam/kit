@@ -3,7 +3,7 @@
 ## Basic Information
 - Name: [To be inferred from interactions]
 - Role: Software Engineer, AI/ML focus
-- Timezone: Pacific Time (PT)
+- Timezone: Eastern Time (ET)
 - Hardware: MacBook Pro M1 Pro, 32GB RAM
 
 ## Preferences
