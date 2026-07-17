@@ -19,32 +19,50 @@ Kit is a production-ready personal AI assistant built with LlamaStack (soon OGX)
 
 **Start Gateway (main entry point)**
 ```bash
+# Using uv (recommended - automatically uses venv)
+uv run python -m gateway.server
+
+# OR activate venv first, then run
+source .venv/bin/activate
 python -m gateway.server
+
 # Starts on http://127.0.0.1:18789
 # Serves web UI and handles WebSocket connections
 ```
 
 **Start LlamaStack** (if using, but kit can run without it)
 ```bash
-llama stack run llama-stack-run.yaml
+uv run llama stack run llama-stack-run.yaml
 # Starts on http://127.0.0.1:8321
 # Connects to RedHat MaaS for qwen3-14b model
 ```
 
 **CLI Usage**
 ```bash
+uv run python cli.py "What files are in this directory?"
+uv run python cli.py --stats  # Show session statistics
+
+# OR with activated venv
+source .venv/bin/activate
 python cli.py "What files are in this directory?"
-python cli.py --stats  # Show session statistics
 ```
 
 ### Setup
 
-**Install dependencies**
+**Install dependencies (using uv)**
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -r requirements.txt
+uv sync  # Installs from pyproject.toml
 playwright install chromium  # Required for browser tools
+```
+
+**OR using pip directly**
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .  # Installs from pyproject.toml
+playwright install chromium
 ```
 
 **Environment configuration**
@@ -232,10 +250,10 @@ print(json.dumps({"result": "success"}))
 **Quick smoke test**
 ```bash
 # Terminal 1: Start gateway
-python -m gateway.server
+uv run python -m gateway.server
 
 # Terminal 2: Send a message
-python cli.py "List files in workspace/"
+uv run python cli.py "List files in workspace/"
 
 # Or open browser
 open http://localhost:18789
@@ -248,10 +266,10 @@ open http://localhost:18789
 
 **Test tools**
 ```bash
-python cli.py "Create a file called test.txt with content 'Hello'"
-python cli.py "Read test.txt"
-python cli.py "Take a screenshot of https://github.com"  # Requires playwright
-python cli.py "Search the web for Python 3.14 features"  # Requires TAVILY_API_KEY
+uv run python cli.py "Create a file called test.txt with content 'Hello'"
+uv run python cli.py "Read test.txt"
+uv run python cli.py "Take a screenshot of https://github.com"  # Requires playwright
+uv run python cli.py "Search the web for Python 3.14 features"  # Requires TAVILY_API_KEY
 ```
 
 ## Common Development Tasks

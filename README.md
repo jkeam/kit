@@ -24,14 +24,16 @@ Kit that can:
 
 1. **Install dependencies**
 ```bash
-# Create virtual environment
+# Using uv (recommended)
 uv venv
 source .venv/bin/activate
+uv sync  # Installs from pyproject.toml
+playwright install chromium
 
-# Install packages
-uv pip install -r requirements.txt
-
-# Install Playwright browsers
+# OR using pip
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .  # Installs from pyproject.toml
 playwright install chromium
 ```
 
@@ -50,7 +52,11 @@ llama stack run llama-stack-run.yaml
 
 4. **Start Gateway**
 ```bash
-# Terminal 2
+# Using uv (recommended - automatically uses venv)
+uv run python -m gateway.server
+
+# OR activate venv first
+source .venv/bin/activate
 python -m gateway.server
 ```
 
@@ -71,10 +77,13 @@ Open browser: http://localhost:18789
 
 ### Command Line
 ```bash
-# One-off queries
-python cli.py "What files are in this directory?"
+# Using uv
+uv run python cli.py "What files are in this directory?"
+uv run python cli.py --stats
 
-# Check session stats
+# OR with activated venv
+source .venv/bin/activate
+python cli.py "What files are in this directory?"
 python cli.py --stats
 ```
 

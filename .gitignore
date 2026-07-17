@@ -38,7 +38,7 @@ Thumbs.db
 PHASE*.md
 
 # Workspace memory (keep committed for persistence)
-# workspace/memory/*.md
+workspace/memory/*.md
 
 # Temporary files
 *.tmp

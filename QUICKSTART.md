@@ -4,6 +4,11 @@
 
 ### Step 1: Start the Gateway
 ```bash
+# Using uv (recommended)
+uv run python -m gateway.server
+
+# OR activate venv first
+source .venv/bin/activate
 python -m gateway.server
 ```
 
@@ -75,9 +80,14 @@ Show disk usage
 
 Prefer terminal? Use the CLI:
 ```bash
+# Using uv
+uv run python cli.py "What can you do?"
+uv run python cli.py "List all files in workspace/"
+uv run python cli.py --stats
+
+# OR with activated venv
+source .venv/bin/activate
 python cli.py "What can you do?"
-python cli.py "List all files in workspace/"
-python cli.py --stats
 ```
 
 ## What's Happening Behind the Scenes?
