@@ -10,6 +10,11 @@ let ws = null;
 let wsReconnectAttempts = 0;
 const WS_MAX_RECONNECT_ATTEMPTS = 5;
 
+// Streaming state
+let streamingMessageDiv = null;
+let streamingContentDiv = null;
+let streamingText = '';
+
 // DOM Elements
 const chatMessages = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
@@ -25,6 +30,9 @@ const refreshSchedulesBtn = document.getElementById('refresh-schedules');
 const schedulesList = document.getElementById('schedules-list');
 const refreshSkillsBtn = document.getElementById('refresh-skills');
 const skillsList = document.getElementById('skills-list');
+const personaEditor = document.getElementById('persona-editor');
+const savePersonaBtn = document.getElementById('save-persona');
+const personaStatus = document.getElementById('persona-status');
 
 // Tab switching
 document.querySelectorAll('.pf-v5-c-tabs__link').forEach(btn => {
@@ -47,6 +55,7 @@ document.querySelectorAll('.pf-v5-c-tabs__link').forEach(btn => {
         if (tabName === 'sessions') loadSessions();
         if (tabName === 'schedules') loadSchedules();
         if (tabName === 'skills') loadSkills();
+        if (tabName === 'persona') loadPersona();
     });
 });
 
@@ -118,61 +127,62 @@ function removeThinkingIndicator() {
     }
 }
 
-// Send message
+// Send message via WebSocket for streaming, with POST fallback
 async function sendMessage() {
     const message = chatInput.value.trim();
     if (!message) return;
 
-    // Disable input
     chatInput.disabled = true;
     sendButton.disabled = true;
     sendButton.textContent = 'Sending...';
 
-    // Add user message
     addMessage(message, 'user');
     chatInput.value = '';
 
-    // Show thinking indicator
-    addThinkingIndicator();
-
-    try {
-        const response = await fetch(`${API_BASE}/chat`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                platform: PLATFORM,
-                user_id: USER_ID,
-                message: message
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        addThinkingIndicator();
+        ws.send(JSON.stringify({
+            type: 'chat_message',
+            platform: PLATFORM,
+            user_id: USER_ID,
+            message: message,
+        }));
+        // Response handled by handleWebSocketMessage — input re-enabled on stream_end/stream_error
+    } else {
+        // Fallback to POST when WebSocket is not connected
+        addThinkingIndicator();
+        try {
+            const response = await fetch(`${API_BASE}/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ platform: PLATFORM, user_id: USER_ID, message: message }),
+            });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const data = await response.json();
+            removeThinkingIndicator();
+            addMessage(data.response, 'assistant');
+            messageCount = data.message_count;
+            messageCountSpan.textContent = `${messageCount} messages`;
+        } catch (error) {
+            removeThinkingIndicator();
+            addMessage(`Error: ${error.message}`, 'system');
+        } finally {
+            chatInput.disabled = false;
+            sendButton.disabled = false;
+            sendButton.textContent = 'Send';
+            chatInput.focus();
         }
-
-        const data = await response.json();
-
-        // Remove thinking indicator
-        removeThinkingIndicator();
-
-        // Add assistant response
-        addMessage(data.response, 'assistant');
-
-        // Update message count
-        messageCount = data.message_count;
-        messageCountSpan.textContent = `${messageCount} messages`;
-
-    } catch (error) {
-        removeThinkingIndicator();
-        addMessage(`Error: ${error.message}`, 'system');
-    } finally {
-        chatInput.disabled = false;
-        sendButton.disabled = false;
-        sendButton.textContent = 'Send';
-        chatInput.focus();
     }
+}
+
+function finishStreaming() {
+    streamingMessageDiv = null;
+    streamingContentDiv = null;
+    streamingText = '';
+    chatInput.disabled = false;
+    sendButton.disabled = false;
+    sendButton.textContent = 'Send';
+    chatInput.focus();
 }
 
 // Event listeners
@@ -389,25 +399,105 @@ function connectWebSocket() {
 // Handle WebSocket messages
 function handleWebSocketMessage(data) {
     console.log('WebSocket message:', data);
+    const isOwnSession = data.session_id === `${PLATFORM}:${USER_ID}`;
 
     switch (data.type) {
         case 'connected':
             console.log('WebSocket ready');
             break;
 
+        case 'stream_start':
+            if (isOwnSession) {
+                removeThinkingIndicator();
+                streamingText = '';
+                streamingMessageDiv = document.createElement('div');
+                streamingMessageDiv.className = 'message assistant streaming';
+                streamingContentDiv = document.createElement('div');
+                streamingContentDiv.className = 'message-content';
+                streamingMessageDiv.appendChild(streamingContentDiv);
+                const timeDiv = document.createElement('div');
+                timeDiv.className = 'message-time';
+                timeDiv.textContent = new Date().toLocaleTimeString();
+                streamingMessageDiv.appendChild(timeDiv);
+                chatMessages.appendChild(streamingMessageDiv);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            break;
+
+        case 'text_delta':
+            if (isOwnSession && streamingContentDiv) {
+                streamingText += data.content;
+                streamingContentDiv.textContent = streamingText;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            break;
+
+        case 'tool_call_start':
+            if (isOwnSession && streamingMessageDiv) {
+                const toolDiv = document.createElement('div');
+                toolDiv.className = 'tool-call tool-running';
+                toolDiv.id = `tool-${data.tool_name}-${Date.now()}`;
+                toolDiv.innerHTML =
+                    `<span class="tool-call-name">▶ ${data.tool_name}</span>`;
+                streamingMessageDiv.insertBefore(
+                    toolDiv,
+                    streamingMessageDiv.querySelector('.message-time')
+                );
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+            break;
+
+        case 'tool_call_result':
+            if (isOwnSession && streamingMessageDiv) {
+                const running = streamingMessageDiv.querySelector('.tool-call.tool-running');
+                if (running) {
+                    running.classList.remove('tool-running');
+                    running.classList.add('tool-done');
+                    running.querySelector('.tool-call-name').textContent =
+                        `✓ ${data.tool_name}`;
+                    const resultDiv = document.createElement('div');
+                    resultDiv.className = 'tool-call-result';
+                    const preview = data.result.length > 300
+                        ? data.result.slice(0, 300) + '...'
+                        : data.result;
+                    resultDiv.textContent = preview;
+                    running.appendChild(resultDiv);
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+            }
+            break;
+
+        case 'stream_end':
+            if (isOwnSession) {
+                if (streamingMessageDiv) {
+                    streamingMessageDiv.classList.remove('streaming');
+                }
+                if (data.message_count) {
+                    messageCount = data.message_count;
+                    messageCountSpan.textContent = `${messageCount} messages`;
+                }
+                finishStreaming();
+            }
+            break;
+
+        case 'stream_error':
+            if (isOwnSession) {
+                removeThinkingIndicator();
+                addMessage(`Error: ${data.error}`, 'system');
+                finishStreaming();
+            }
+            break;
+
         case 'user_message':
-            // Don't show our own messages again
-            if (data.session_id !== `${PLATFORM}:${USER_ID}`) {
+            if (!isOwnSession) {
                 addMessage(`[${data.session_id}] ${data.message}`, 'user');
             }
             break;
 
         case 'assistant_message':
-            // Show responses from other sessions
-            if (data.session_id !== `${PLATFORM}:${USER_ID}`) {
+            if (!isOwnSession) {
                 addMessage(`[${data.session_id}] ${data.message}`, 'assistant');
             }
-            // Update session list
             loadSessions();
             break;
 
@@ -426,6 +516,46 @@ function sendPing() {
         ws.send(JSON.stringify({ type: 'ping' }));
     }
 }
+
+// Load persona (SOUL.md)
+async function loadPersona() {
+    personaEditor.disabled = true;
+    personaStatus.textContent = '';
+    try {
+        const response = await fetch(`${API_BASE}/persona`);
+        if (!response.ok) throw new Error('Failed to load persona');
+        const data = await response.json();
+        personaEditor.value = data.content;
+    } catch (error) {
+        personaStatus.textContent = `Error: ${error.message}`;
+    } finally {
+        personaEditor.disabled = false;
+    }
+}
+
+// Save persona (SOUL.md)
+async function savePersona() {
+    savePersonaBtn.disabled = true;
+    savePersonaBtn.textContent = 'Saving...';
+    personaStatus.textContent = '';
+    try {
+        const response = await fetch(`${API_BASE}/persona`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: personaEditor.value }),
+        });
+        if (!response.ok) throw new Error('Failed to save');
+        personaStatus.textContent = 'Saved';
+        setTimeout(() => { personaStatus.textContent = ''; }, 3000);
+    } catch (error) {
+        personaStatus.textContent = `Error: ${error.message}`;
+    } finally {
+        savePersonaBtn.disabled = false;
+        savePersonaBtn.textContent = 'Save';
+    }
+}
+
+savePersonaBtn.addEventListener('click', savePersona);
 
 // Initialize
 async function init() {

@@ -6,13 +6,15 @@ This integrates with LlamaStack (soon OGX) which handles the ReAct loop.
 
 import json
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Generator
 from llama_stack_client import LlamaStackClient
 
 from runtime.memory import MemoryManager
 from runtime.embeddings import EmbeddingsManager
 from runtime.skills import SkillsManager
 from tools.core import TOOLS, execute_tool
+
+MAX_TOOL_ROUNDS = 10
 
 
 class PersonalAssistant:
@@ -83,129 +85,177 @@ class PersonalAssistant:
 
         return "\n".join(parts)
 
+    def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
+        """Execute a tool call and return the result as a string."""
+        if tool_name == "memory_search" and self.embeddings:
+            query = tool_args.get("query", "")
+            n_results = tool_args.get("n_results", 3)
+            search_results = self.embeddings.search(query, n_results)
+            formatted = []
+            for r in search_results:
+                formatted.append(
+                    f"[{r['source_type']}] {r['content'][:200]}... "
+                    f"(from {Path(r['source']).name})"
+                )
+            return "\n\n".join(formatted) if formatted else "No relevant memories found"
+
+        if tool_name == "skill_create":
+            params_str = tool_args.get("parameters")
+            params = json.loads(params_str) if params_str else None
+            tags = tool_args.get("tags", "").split(",") if tool_args.get("tags") else None
+            return self.skills.create_skill(
+                name=tool_args["name"],
+                description=tool_args["description"],
+                code=tool_args["code"],
+                parameters=params,
+                tags=tags
+            )
+        if tool_name == "skill_list":
+            return self.skills.list_skills(tool_args.get("tag"))
+        if tool_name == "skill_execute":
+            args_str = tool_args.get("args")
+            kwargs = json.loads(args_str) if args_str else {}
+            return self.skills.execute_skill(tool_args["name"], **kwargs)
+        if tool_name == "skill_improve":
+            return self.skills.improve_skill(
+                name=tool_args["name"],
+                changes=tool_args["changes"],
+                code=tool_args.get("code")
+            )
+        if tool_name == "skill_delete":
+            return self.skills.delete_skill(tool_args["name"])
+        if tool_name == "skill_info":
+            info = self.skills.get_skill_info(tool_args["name"])
+            return json.dumps(info, indent=2) if info else f"Skill '{tool_args['name']}' not found"
+
+        return execute_tool(tool_name, tool_args)
+
     def chat(self, user_message: str) -> str:
         """
-        Send a message to the assistant and get a response.
+        Send a message and get a complete response (non-streaming).
+        """
+        full_response = ""
+        for event in self.chat_stream(user_message):
+            if event["type"] == "stream_end":
+                full_response = event["content"]
+            elif event["type"] == "stream_error":
+                full_response = f"Error: {event['error']}"
+        return full_response
 
-        Args:
-            user_message: The user's message
+    def chat_stream(self, user_message: str) -> Generator[Dict[str, Any], None, None]:
+        """
+        Send a message and yield streaming events.
 
-        Returns:
-            The assistant's response
+        Yields dicts with "type" key:
+            stream_start  - response is beginning
+            text_delta    - incremental text content {"content": str}
+            tool_call_start  - tool invoked {"tool_name": str, "tool_args": dict}
+            tool_call_result - tool finished {"tool_name": str, "result": str}
+            stream_end    - done {"content": str}  (full assembled text)
+            stream_error  - error {"error": str}
         """
         try:
-            # Build system prompt with memory
             system_prompt = self._build_system_prompt()
-
-            # Create messages (OpenAI format)
             messages = [
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user",
-                    "content": user_message
-                }
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
             ]
 
-            # Make request to LlamaStack
-            # LlamaStack will handle the ReAct loop (tool calling + execution)
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                tools=TOOLS,
-                # Note: In a real implementation, we'd set up a tool executor
-                # For now, we'll handle tools in a simpler way
-            )
+            yield {"type": "stream_start"}
 
-            # Extract response
-            if response.choices and len(response.choices) > 0:
-                choice = response.choices[0]
-                assistant_message = choice.message.content or ""
+            all_content_parts: list[str] = []
 
-                # Check if there are tool calls
-                if hasattr(choice.message, 'tool_calls') and choice.message.tool_calls:
-                    # Handle tool calls
-                    tool_results = []
-                    for tool_call in choice.message.tool_calls:
-                        tool_name = tool_call.function.name
+            for _round in range(MAX_TOOL_ROUNDS):
+                stream = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    tools=TOOLS,
+                    stream=True,
+                )
+
+                content_parts: list[str] = []
+                tool_calls_acc: dict[int, dict] = {}
+                finish_reason = None
+
+                for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+
+                    if delta and delta.content:
+                        content_parts.append(delta.content)
+                        yield {"type": "text_delta", "content": delta.content}
+
+                    if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                            if tc.id:
+                                tool_calls_acc[idx]["id"] = tc.id
+                            if tc.function:
+                                if tc.function.name:
+                                    tool_calls_acc[idx]["name"] = tc.function.name
+                                if tc.function.arguments:
+                                    tool_calls_acc[idx]["arguments"] += tc.function.arguments
+
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+
+                round_content = "".join(content_parts)
+                all_content_parts.append(round_content)
+
+                if finish_reason == "tool_calls" and tool_calls_acc:
+                    assistant_tool_calls = []
+                    for idx in sorted(tool_calls_acc.keys()):
+                        tc = tool_calls_acc[idx]
+                        assistant_tool_calls.append({
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                        })
+
+                    messages.append({
+                        "role": "assistant",
+                        "content": round_content or None,
+                        "tool_calls": assistant_tool_calls,
+                    })
+
+                    for tc_msg in assistant_tool_calls:
+                        tool_name = tc_msg["function"]["name"]
                         try:
-                            tool_args = json.loads(tool_call.function.arguments)
+                            tool_args = json.loads(tc_msg["function"]["arguments"])
+                        except json.JSONDecodeError:
+                            tool_args = {}
 
-                            # Special handling for memory_search
-                            if tool_name == "memory_search" and self.embeddings:
-                                query = tool_args.get("query", "")
-                                n_results = tool_args.get("n_results", 3)
-                                search_results = self.embeddings.search(query, n_results)
+                        yield {"type": "tool_call_start", "tool_name": tool_name, "tool_args": tool_args}
 
-                                # Format results
-                                formatted = []
-                                for r in search_results:
-                                    formatted.append(
-                                        f"[{r['source_type']}] {r['content'][:200]}... "
-                                        f"(from {Path(r['source']).name})"
-                                    )
-                                result = "\n\n".join(formatted) if formatted else "No relevant memories found"
-
-                            # Special handling for skills tools
-                            elif tool_name.startswith("skill_"):
-                                if tool_name == "skill_create":
-                                    params_str = tool_args.get("parameters")
-                                    params = json.loads(params_str) if params_str else None
-                                    tags = tool_args.get("tags", "").split(",") if tool_args.get("tags") else None
-                                    result = self.skills.create_skill(
-                                        name=tool_args["name"],
-                                        description=tool_args["description"],
-                                        code=tool_args["code"],
-                                        parameters=params,
-                                        tags=tags
-                                    )
-                                elif tool_name == "skill_list":
-                                    result = self.skills.list_skills(tool_args.get("tag"))
-                                elif tool_name == "skill_execute":
-                                    args_str = tool_args.get("args")
-                                    kwargs = json.loads(args_str) if args_str else {}
-                                    result = self.skills.execute_skill(tool_args["name"], **kwargs)
-                                elif tool_name == "skill_improve":
-                                    result = self.skills.improve_skill(
-                                        name=tool_args["name"],
-                                        changes=tool_args["changes"],
-                                        code=tool_args.get("code")
-                                    )
-                                elif tool_name == "skill_delete":
-                                    result = self.skills.delete_skill(tool_args["name"])
-                                elif tool_name == "skill_info":
-                                    info = self.skills.get_skill_info(tool_args["name"])
-                                    result = json.dumps(info, indent=2) if info else f"Skill '{tool_args['name']}' not found"
-                                else:
-                                    result = execute_tool(tool_name, tool_args)
-
-                            else:
-                                result = execute_tool(tool_name, tool_args)
-
-                            tool_results.append(f"Tool '{tool_name}' result: {result}")
+                        try:
+                            result = str(self._execute_tool(tool_name, tool_args))
                         except Exception as e:
-                            tool_results.append(f"Tool '{tool_name}' error: {e}")
+                            result = f"Error: {e}"
 
-                    # For Phase 1, we'll include tool results in response
-                    # In Phase 2+, we'd feed this back to the model
-                    if tool_results:
-                        assistant_message += "\n\n" + "\n".join(tool_results)
+                        yield {"type": "tool_call_result", "tool_name": tool_name, "result": result}
 
-                # Log interaction to daily memory
-                self.memory.log_interaction(user_message, assistant_message)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_msg["id"],
+                            "content": result,
+                        })
 
-                return assistant_message
-            else:
-                error_msg = "No response from model"
-                self.memory.log_interaction(user_message, f"ERROR: {error_msg}")
-                return error_msg
+                    continue
+
+                break
+
+            full_response = "".join(all_content_parts)
+            self.memory.log_interaction(user_message, full_response)
+            yield {"type": "stream_end", "content": full_response}
 
         except Exception as e:
-            error_msg = f"Error: {str(e)}"
+            error_msg = str(e)
             self.memory.log_interaction(user_message, f"ERROR: {error_msg}")
-            return error_msg
+            yield {"type": "stream_error", "error": error_msg}
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """Get statistics about memory usage."""

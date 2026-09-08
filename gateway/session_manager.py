@@ -6,7 +6,8 @@ Session ID format: {platform}:{user_id}
 Example: telegram:123456789, discord:987654321, cli:local
 """
 
-from typing import Dict, Optional, List
+import asyncio
+from typing import Dict, Optional, List, AsyncGenerator, Any
 from datetime import datetime
 from dataclasses import dataclass, field
 from runtime.agent import PersonalAssistant
@@ -35,17 +36,10 @@ class SessionManager:
 
     def __init__(
         self,
-        llama_stack_url: str = "http://localhost:8321",
+        llm_base_url: str = "http://localhost:8321",
         model: str = "redhat-maas/qwen3-14b"
     ):
-        """
-        Initialize session manager.
-
-        Args:
-            llama_stack_url: LlamaStack server URL
-            model: Model to use for agents
-        """
-        self.llama_stack_url = llama_stack_url
+        self.llm_base_url = llm_base_url
         self.model = model
         self.sessions: Dict[str, Session] = {}
 
@@ -65,7 +59,7 @@ class SessionManager:
         if session_id not in self.sessions:
             # Create new session with dedicated agent
             agent = PersonalAssistant(
-                base_url=self.llama_stack_url,
+                base_url=self.llm_base_url,
                 model=self.model
             )
 
@@ -95,6 +89,20 @@ class SessionManager:
         session = self.get_session(platform, user_id)
         response = session.agent.chat(message)
         return response
+
+    async def send_message_stream(
+        self, platform: str, user_id: str, message: str
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Yield streaming events from the agent, running the sync generator in a thread."""
+        session = self.get_session(platform, user_id)
+        gen = session.agent.chat_stream(message)
+        loop = asyncio.get_event_loop()
+        _DONE = object()
+        while True:
+            event = await loop.run_in_executor(None, lambda: next(gen, _DONE))
+            if event is _DONE:
+                break
+            yield event
 
     def list_sessions(self) -> List[Session]:
         """Get all active sessions."""

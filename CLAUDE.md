@@ -30,11 +30,15 @@ python -m gateway.server
 # Serves web UI and handles WebSocket connections
 ```
 
-**Start LlamaStack** (if using, but kit can run without it)
+**Start an LLM provider** (pick one)
 ```bash
+# Option A: Ollama
+ollama pull qwen3:14b && ollama serve
+# Set LLM_BASE_URL=http://localhost:11434 and LLM_MODEL=qwen3:14b in .env
+
+# Option B: LlamaStack / OGX
 uv run llama stack run llama-stack-run.yaml
-# Starts on http://127.0.0.1:8321
-# Connects to RedHat MaaS for qwen3-14b model
+# Starts on http://127.0.0.1:8321, uses defaults in .env
 ```
 
 **CLI Usage**

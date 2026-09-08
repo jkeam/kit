@@ -8,6 +8,9 @@ Handles:
 - Event broadcasting (future: WebSockets)
 """
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,6 +22,7 @@ import uvicorn
 import json
 import asyncio
 
+import os
 from gateway.session_manager import SessionManager
 
 
@@ -105,8 +109,11 @@ manager = ConnectionManager()
 async def startup_event():
     """Initialize gateway on startup."""
     global session_manager
-    session_manager = SessionManager()
+    base_url = os.environ.get("LLM_BASE_URL", "http://localhost:8321")
+    model = os.environ.get("LLM_MODEL", "redhat-maas/qwen3-14b")
+    session_manager = SessionManager(llm_base_url=base_url, model=model)
     print("✅ Gateway server started")
+    print(f"🤖 LLM: {model} at {base_url}")
     print("📡 Ready to handle multi-platform requests")
 
 
@@ -247,6 +254,28 @@ async def cleanup_sessions(max_age_minutes: int = 60):
     }
 
 
+SOUL_PATH = Path(__file__).parent.parent / "workspace" / "SOUL.md"
+
+
+@app.get("/persona")
+async def get_persona():
+    """Get the current SOUL.md content."""
+    content = SOUL_PATH.read_text() if SOUL_PATH.exists() else ""
+    return {"content": content}
+
+
+class PersonaUpdate(BaseModel):
+    content: str
+
+
+@app.put("/persona")
+async def update_persona(update: PersonaUpdate):
+    """Update SOUL.md content."""
+    SOUL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SOUL_PATH.write_text(update.content)
+    return {"message": "Persona updated"}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -282,11 +311,52 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
 
                 elif msg_type == "subscribe":
-                    # Subscribe to events (future: filter by session_id)
                     await websocket.send_json({
                         "type": "subscribed",
                         "message": "Subscribed to all events"
                     })
+
+                elif msg_type == "chat_message":
+                    platform = message.get("platform", "web")
+                    user_id = message.get("user_id", "anonymous")
+                    user_msg = message.get("message", "")
+                    session_id = f"{platform}:{user_id}"
+
+                    await manager.broadcast({
+                        "type": "user_message",
+                        "session_id": session_id,
+                        "platform": platform,
+                        "message": user_msg,
+                        "timestamp": asyncio.get_event_loop().time(),
+                    })
+
+                    try:
+                        async for event in session_manager.send_message_stream(
+                            platform=platform, user_id=user_id, message=user_msg
+                        ):
+                            await websocket.send_json({
+                                **event,
+                                "session_id": session_id,
+                                "timestamp": asyncio.get_event_loop().time(),
+                            })
+
+                            if event["type"] == "stream_end":
+                                stats = session_manager.get_session_stats(session_id)
+                                await manager.broadcast({
+                                    "type": "assistant_message",
+                                    "session_id": session_id,
+                                    "platform": platform,
+                                    "message": event.get("content", ""),
+                                    "message_count": stats["message_count"] if stats else 0,
+                                    "timestamp": asyncio.get_event_loop().time(),
+                                })
+                    except Exception as e:
+                        await websocket.send_json({
+                            "type": "stream_error",
+                            "session_id": session_id,
+                            "error": str(e),
+                            "timestamp": asyncio.get_event_loop().time(),
+                        })
 
             except json.JSONDecodeError:
                 await websocket.send_json({

@@ -114,6 +114,11 @@
                                                 <span class="pf-v5-c-tabs__item-text">Skills</span>
                                             </button>
                                         </li>
+                                        <li class="pf-v5-c-tabs__item">
+                                            <button class="pf-v5-c-tabs__link" data-tab="persona">
+                                                <span class="pf-v5-c-tabs__item-text">Persona</span>
+                                            </button>
+                                        </li>
                                     </ul>
                                 </div>
                             </div>
@@ -215,6 +220,23 @@
                                         Refresh
                                     </button>
                                     <div id="skills-list"></div>
+                                </div>
+
+                                <!-- Persona Tab -->
+                                <div id="persona-tab" class="tab-content">
+                                    <p style="margin-bottom: 0.75rem; font-size: 13px; color: var(--pf-v5-global--Color--200);">
+                                        Edit SOUL.md to define Kit's personality, behavior, and communication style. Changes take effect on the next message.
+                                    </p>
+                                    <textarea
+                                        id="persona-editor"
+                                        class="pf-v5-c-form-control persona-editor"
+                                        rows="18"
+                                        placeholder="Loading..."
+                                    ></textarea>
+                                    <div style="margin-top: 0.75rem; display: flex; gap: 8px;">
+                                        <button id="save-persona" class="pf-v5-c-button pf-m-primary">Save</button>
+                                        <span id="persona-status" style="font-size: 13px; color: var(--pf-v5-global--success-color--100); align-self: center;"></span>
+                                    </div>
                                 </div>
                             </div>
                         </div>

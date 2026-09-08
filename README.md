@@ -44,15 +44,29 @@ cp .env.example .env
 # - TAVILY_API_KEY (for web search)
 ```
 
-3. **Start LlamaStack** (if using)
+3. **Start an LLM provider** (pick one)
+
+**Option A: Ollama (easiest)**
 ```bash
-# Terminal 1
-llama stack run llama-stack-run.yaml
+# Install Ollama from https://ollama.com, then:
+ollama pull qwen3:14b
+ollama serve
+# Runs on http://localhost:11434
+
+# Set in your .env:
+# LLM_BASE_URL=http://localhost:11434
+# LLM_MODEL=qwen3:14b
+```
+
+**Option B: LlamaStack / OGX**
+```bash
+uv run llama stack run llama-stack-run.yaml
+# Runs on http://localhost:8321
 ```
 
 4. **Start Gateway**
 ```bash
-# Using uv (recommended - automatically uses venv)
+# Terminal 2 (using uv, recommended)
 uv run python -m gateway.server
 
 # OR activate venv first

@@ -208,6 +208,62 @@
     }
 }
 
+/* Streaming cursor */
+.message.streaming .message-content::after {
+    content: '▌';
+    animation: blink 0.7s step-end infinite;
+    color: var(--pf-v5-global--primary-color--100);
+}
+
+@keyframes blink {
+    50% { opacity: 0; }
+}
+
+/* Tool call indicators */
+.tool-call {
+    font-size: 13px;
+    margin: 6px 0;
+    padding: 8px 12px;
+    border-radius: 4px;
+    background: var(--pf-v5-global--BackgroundColor--300);
+    border-left: 3px solid var(--pf-v5-global--palette--gold-400);
+}
+
+.tool-call.tool-running {
+    opacity: 0.8;
+}
+
+.tool-call.tool-done {
+    border-left-color: var(--pf-v5-global--success-color--100);
+}
+
+.tool-call-name {
+    font-weight: 600;
+    color: var(--pf-v5-global--palette--gold-400);
+}
+
+.tool-call.tool-done .tool-call-name {
+    color: var(--pf-v5-global--success-color--100);
+}
+
+.tool-call-result {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--pf-v5-global--Color--200);
+    white-space: pre-wrap;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+/* Persona editor */
+.persona-editor {
+    width: 100%;
+    font-family: monospace;
+    font-size: 13px;
+    resize: vertical;
+    min-height: 200px;
+}
+
 /* Responsive Grid */
 @media (max-width: 768px) {
     .pf-v5-l-grid__item.pf-m-6-col {

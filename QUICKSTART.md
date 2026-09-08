@@ -1,10 +1,32 @@
 # 🚀 Quick Start Guide
 
-## Start Your Kit in 3 Steps
+## Start Your Kit in 4 Steps
 
-### Step 1: Start the Gateway
+### Step 1: Start an LLM Provider (pick one)
+
+Kit needs a running LLM server for model inference.
+
+**Option A: Ollama (easiest)**
 ```bash
-# Using uv (recommended)
+# Install from https://ollama.com, then:
+ollama pull qwen3:14b
+ollama serve
+
+# Add to your .env file:
+# LLM_BASE_URL=http://localhost:11434
+# LLM_MODEL=qwen3:14b
+```
+
+**Option B: LlamaStack / OGX**
+```bash
+# Terminal 1
+uv run llama stack run llama-stack-run.yaml
+# Starts on http://127.0.0.1:8321
+```
+
+### Step 2: Start the Gateway
+```bash
+# Terminal 2 (using uv, recommended)
 uv run python -m gateway.server
 
 # OR activate venv first
@@ -19,14 +41,14 @@ You should see:
 INFO: Uvicorn running on http://127.0.0.1:18789
 ```
 
-### Step 2: Open the Web UI
+### Step 3: Open the Web UI
 ```bash
 open http://localhost:18789
 ```
 
 Or manually navigate to: **http://localhost:18789**
 
-### Step 3: Start Chatting!
+### Step 4: Start Chatting!
 
 In the web UI, you'll see:
 - ✅ "Connected to Kit"
