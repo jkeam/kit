@@ -7,10 +7,14 @@ Example: telegram:123456789, discord:987654321, cli:local
 """
 
 import asyncio
+import json
+from pathlib import Path
 from typing import Dict, Optional, List, AsyncGenerator, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from runtime.agent import PersonalAssistant
+
+SESSIONS_DIR = Path(__file__).parent.parent / "workspace" / "sessions"
 
 
 @dataclass
@@ -104,6 +108,44 @@ class SessionManager:
                 break
             yield event
 
+    @staticmethod
+    def _session_file(session_id: str) -> Path:
+        safe_name = session_id.replace(":", "_").replace("/", "_")
+        return SESSIONS_DIR / f"{safe_name}.json"
+
+    def save_message(self, session_id: str, role: str, content: str) -> None:
+        """Append a message to the session's history on disk."""
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+        path = self._session_file(session_id)
+        messages = []
+        if path.exists():
+            try:
+                messages = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                messages = []
+        messages.append({
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        path.write_text(json.dumps(messages))
+
+    def get_messages(self, session_id: str) -> List[Dict[str, str]]:
+        """Load persisted messages for a session."""
+        path = self._session_file(session_id)
+        if not path.exists():
+            return []
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return []
+
+    def clear_messages(self, session_id: str) -> None:
+        """Delete persisted messages for a session."""
+        path = self._session_file(session_id)
+        if path.exists():
+            path.unlink()
+
     def list_sessions(self) -> List[Session]:
         """Get all active sessions."""
         return list(self.sessions.values())
@@ -135,6 +177,7 @@ class SessionManager:
         """
         if session_id in self.sessions:
             del self.sessions[session_id]
+            self.clear_messages(session_id)
             return True
         return False
 

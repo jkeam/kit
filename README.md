@@ -219,15 +219,12 @@ vim workspace/MEMORY.md
 - Schedules stored but not executed (no cron runner)
 - Web search requires Tavily API key
 - Browser automation limited to basic actions
-- No persistent WebSocket sessions (memory only)
-- Synchronous message processing (one at a time)
+- Session runtime state (LLM context) is in-memory only; chat history is persisted
 
 ## 🔮 Future Ideas (Not Implemented)
 
 - Telegram/Discord bots (skipped - web UI sufficient)
 - Skill learning system
-- Persistent WebSocket sessions
-- Async message processing
 - Authentication/multi-user
 - Mobile app
 

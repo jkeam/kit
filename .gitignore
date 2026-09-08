@@ -40,6 +40,9 @@ PHASE*.md
 # Workspace memory (keep committed for persistence)
 workspace/memory/*.md
 
+# Session history (user conversations)
+workspace/sessions/
+
 # Temporary files
 *.tmp
 *.bak

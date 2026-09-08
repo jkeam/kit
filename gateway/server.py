@@ -156,6 +156,8 @@ async def chat(request: ChatRequest):
     try:
         session_id = f"{request.platform}:{request.user_id}"
 
+        session_manager.save_message(session_id, "user", request.message)
+
         # Broadcast user message event
         await manager.broadcast({
             "type": "user_message",
@@ -174,6 +176,8 @@ async def chat(request: ChatRequest):
 
         # Get session stats
         stats = session_manager.get_session_stats(session_id)
+
+        session_manager.save_message(session_id, "assistant", response)
 
         # Broadcast assistant response event
         await manager.broadcast({
@@ -268,6 +272,14 @@ class PersonaUpdate(BaseModel):
     content: str
 
 
+@app.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str):
+    """Get persisted message history for a session."""
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+    return session_manager.get_messages(session_id)
+
+
 @app.put("/persona")
 async def update_persona(update: PersonaUpdate):
     """Update SOUL.md content."""
@@ -322,6 +334,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     user_msg = message.get("message", "")
                     session_id = f"{platform}:{user_id}"
 
+                    session_manager.save_message(session_id, "user", user_msg)
+
                     await manager.broadcast({
                         "type": "user_message",
                         "session_id": session_id,
@@ -341,12 +355,14 @@ async def websocket_endpoint(websocket: WebSocket):
                             })
 
                             if event["type"] == "stream_end":
+                                assistant_content = event.get("content", "")
+                                session_manager.save_message(session_id, "assistant", assistant_content)
                                 stats = session_manager.get_session_stats(session_id)
                                 await manager.broadcast({
                                     "type": "assistant_message",
                                     "session_id": session_id,
                                     "platform": platform,
-                                    "message": event.get("content", ""),
+                                    "message": assistant_content,
                                     "message_count": stats["message_count"] if stats else 0,
                                     "timestamp": asyncio.get_event_loop().time(),
                                 })

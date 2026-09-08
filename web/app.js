@@ -557,11 +557,35 @@ async function savePersona() {
 
 savePersonaBtn.addEventListener('click', savePersona);
 
+// Load chat history from server
+async function loadChatHistory() {
+    const sessionId = `${PLATFORM}:${USER_ID}`;
+    try {
+        const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/messages`);
+        if (!response.ok) return;
+        const messages = await response.json();
+        for (const msg of messages) {
+            const div = addMessage(msg.content, msg.role);
+            const timeDiv = div.querySelector('.message-time');
+            if (timeDiv && msg.timestamp) {
+                timeDiv.textContent = new Date(msg.timestamp).toLocaleTimeString();
+            }
+        }
+        if (messages.length > 0) {
+            messageCount = messages.length;
+            messageCountSpan.textContent = `${messageCount} messages`;
+        }
+    } catch (error) {
+        console.error('Failed to load chat history:', error);
+    }
+}
+
 // Initialize
 async function init() {
     const connected = await checkConnection();
 
     if (connected) {
+        await loadChatHistory();
         addMessage('Connected to Kit', 'system');
         loadSessions();
         connectWebSocket();
