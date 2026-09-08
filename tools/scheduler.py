@@ -53,8 +53,7 @@ def schedule_create(cron: str, task: str, description: str = "") -> str:
         f"Schedule created: {schedule_id}\n"
         f"Cron: {cron}\n"
         f"Task: {task}\n"
-        f"Description: {description}\n\n"
-        f"Note: Scheduler execution requires separate runner process (future implementation)"
+        f"Description: {description}"
     )
 
 

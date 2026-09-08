@@ -216,7 +216,6 @@ vim workspace/MEMORY.md
 
 ## 🚧 Known Limitations
 
-- Schedules stored but not executed (no cron runner)
 - Web search requires Tavily API key
 - Browser automation limited to basic actions
 - Session runtime state (LLM context) is in-memory only; chat history is persisted

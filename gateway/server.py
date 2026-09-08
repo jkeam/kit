@@ -24,6 +24,7 @@ import asyncio
 
 import os
 from gateway.session_manager import SessionManager
+from gateway.scheduler import run_scheduler
 
 
 # Request/Response models
@@ -112,8 +113,10 @@ async def startup_event():
     base_url = os.environ.get("LLM_BASE_URL", "http://localhost:8321")
     model = os.environ.get("LLM_MODEL", "redhat-maas/qwen3-14b")
     session_manager = SessionManager(llm_base_url=base_url, model=model)
+    asyncio.create_task(run_scheduler(session_manager, manager))
     print("✅ Gateway server started")
     print(f"🤖 LLM: {model} at {base_url}")
+    print("⏰ Scheduler running (60s check interval)")
     print("📡 Ready to handle multi-platform requests")
 
 

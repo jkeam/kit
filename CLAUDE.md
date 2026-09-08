@@ -120,7 +120,7 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
   - Uses chromium in non-headless mode
 - `scheduler.py`: schedule_create, schedule_list, schedule_delete
   - Stores schedules as JSON in `workspace/schedules/`
-  - **Note**: Schedules are stored but not executed (no cron runner implemented)
+  - Background cron runner checks every 60s and sends due tasks to the assistant via isolated sessions
 - `skills.py`: skill_list, skill_execute (dynamic tool system)
 
 **workspace/** - Memory and user data
@@ -242,7 +242,7 @@ print(json.dumps({"result": "success"}))
 
 ## Known Limitations
 
-- **Schedules**: Stored but not executed (no cron runner)
+- **Schedules**: Runs in isolated sessions; no failure alerting yet
 - **Web search**: Requires Tavily API key
 - **Browser automation**: Basic actions only (screenshot, navigate, extract)
 - **No persistence**: WebSocket sessions are memory-only
