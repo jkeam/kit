@@ -55,6 +55,16 @@
     margin-top: 4px;
 }
 
+/* Chat Input */
+.pf-v5-c-card__footer .pf-v5-c-input-group {
+    gap: 8px;
+}
+
+#chat-input {
+    padding: 10px 12px;
+    line-height: 1.5;
+}
+
 /* Info Panel */
 .info-card-body {
     min-height: 500px;
@@ -118,6 +128,11 @@
 /* Connection status label */
 #connection-status.pf-m-green {
     --pf-v5-c-label--m-green--BackgroundColor: var(--pf-v5-global--success-color--100);
+}
+
+#connection-status.pf-m-green .pf-v5-c-label__icon,
+#connection-status.pf-m-green .pf-v5-c-label__content {
+    color: white;
 }
 
 /* Empty States */

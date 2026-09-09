@@ -17,6 +17,7 @@ let streamingText = '';
 
 // DOM Elements
 const chatMessages = document.getElementById('chat-messages');
+const chatScrollContainer = chatMessages.closest('.chat-card-body') || chatMessages;
 const chatInput = document.getElementById('chat-input');
 const sendButton = document.getElementById('send-button');
 const connectionStatus = document.getElementById('connection-status');
@@ -77,6 +78,10 @@ async function checkConnection() {
     }
 }
 
+function scrollChatToBottom() {
+    chatScrollContainer.scrollTop = chatScrollContainer.scrollHeight;
+}
+
 // Add message to chat
 function addMessage(content, role = 'user', id = null) {
     const messageDiv = document.createElement('div');
@@ -95,7 +100,7 @@ function addMessage(content, role = 'user', id = null) {
     messageDiv.appendChild(timeDiv);
 
     chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    scrollChatToBottom();
 
     return messageDiv;
 }
@@ -116,7 +121,7 @@ function addThinkingIndicator() {
         </div>
     `;
     chatMessages.appendChild(thinkingDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    scrollChatToBottom();
 }
 
 // Remove thinking indicator
@@ -420,7 +425,7 @@ function handleWebSocketMessage(data) {
                 timeDiv.textContent = new Date().toLocaleTimeString();
                 streamingMessageDiv.appendChild(timeDiv);
                 chatMessages.appendChild(streamingMessageDiv);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
+                scrollChatToBottom();
             }
             break;
 
@@ -428,7 +433,7 @@ function handleWebSocketMessage(data) {
             if (isOwnSession && streamingContentDiv) {
                 streamingText += data.content;
                 streamingContentDiv.textContent = streamingText;
-                chatMessages.scrollTop = chatMessages.scrollHeight;
+                scrollChatToBottom();
             }
             break;
 
@@ -443,7 +448,7 @@ function handleWebSocketMessage(data) {
                     toolDiv,
                     streamingMessageDiv.querySelector('.message-time')
                 );
-                chatMessages.scrollTop = chatMessages.scrollHeight;
+                scrollChatToBottom();
             }
             break;
 
@@ -462,7 +467,7 @@ function handleWebSocketMessage(data) {
                         : data.result;
                     resultDiv.textContent = preview;
                     running.appendChild(resultDiv);
-                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                    scrollChatToBottom();
                 }
             }
             break;
