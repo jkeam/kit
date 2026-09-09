@@ -1,5 +1,58 @@
 /* Custom styles for Personal Assistant with PatternFly */
 
+/* Brand */
+.brand-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+}
+
+.brand-link:hover,
+.brand-link:focus {
+    text-decoration: none;
+}
+
+.brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    background: linear-gradient(135deg, var(--pf-v5-global--primary-color--100), var(--pf-v5-global--primary-color--200));
+    color: white;
+    font-weight: 700;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.brand-wordmark {
+    font-size: 1.375rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--pf-v5-global--Color--100);
+    transition: color 0.15s ease;
+}
+
+.brand-link:hover .brand-wordmark,
+.brand-link:focus .brand-wordmark {
+    color: var(--pf-v5-global--primary-color--100);
+}
+
+/* Cards */
+.pf-v5-c-card {
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+.pf-v5-c-card__header {
+    background-color: #dce8f7;
+    border-bottom: 1px solid var(--pf-v5-global--BorderColor--200);
+    min-height: 81px;
+    align-items: center;
+}
+
 /* Chat Messages */
 .chat-card-body {
     min-height: 500px;
@@ -63,6 +116,11 @@
 #chat-input {
     padding: 10px 12px;
     line-height: 1.5;
+    border-radius: 12px;
+}
+
+#send-button {
+    border-radius: 12px;
 }
 
 /* Info Panel */
@@ -350,8 +408,14 @@
 }
 
 @media (max-width: 480px) {
-    .pf-v5-c-masthead__brand .pf-v5-c-brand {
-        font-size: 1.2rem !important;
+    .brand-wordmark {
+        font-size: 1.1rem;
+    }
+
+    .brand-mark {
+        width: 28px;
+        height: 28px;
+        font-size: 15px;
     }
 
     .chat-card-body,
