@@ -59,6 +59,13 @@
     align-items: center;
 }
 
+/* PatternFly pins card actions to align-self: flex-start with a
+   compensating negative margin; override both so it centers with the title. */
+.pf-v5-c-card__actions {
+    align-self: center;
+    margin-top: 0;
+}
+
 /* Chat Messages */
 .chat-card-body {
     min-height: 500px;
@@ -184,6 +191,14 @@
 
 #refresh-schedules,
 #refresh-skills {
+    border-radius: 12px;
+}
+
+/* PatternFly draws the secondary button's hover/focus border via an
+   ::after overlay with its own hardcoded border-radius (3px), which
+   doesn't follow the button's own radius above - match it explicitly. */
+#refresh-schedules::after,
+#refresh-skills::after {
     border-radius: 12px;
 }
 
