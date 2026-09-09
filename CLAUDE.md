@@ -189,6 +189,7 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
 **LLM provider selection** (`runtime/agent.py`, `gateway/server.py`)
 - `LLM_PROVIDER` env var chooses the client: `llamastack` (default, uses `LlamaStackClient`) or an OpenAI-compatible provider (`ollama`, `openai`), which uses the standard `openai` client instead
 - `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` are passed through to whichever client is selected; OpenAI-compatible providers need a `/v1`-suffixed base URL (e.g. OpenCode Zen: `https://opencode.ai/zen/v1`)
+- `LLM_EXTRA_HEADERS` (optional): JSON object of extra HTTP headers sent with every LLM request, for either client (e.g. `{"x-opencode-session": "..."}` for OpenCode Zen)
 
 **pyproject.toml** - Python dependencies
 - Core: llama-stack, llama-stack-client, ramalama

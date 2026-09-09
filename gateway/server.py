@@ -114,11 +114,14 @@ async def startup_event():
     model = os.environ.get("LLM_MODEL", "redhat-maas/qwen3-14b")
     provider = os.environ.get("LLM_PROVIDER", "llamastack")
     api_key = os.environ.get("LLM_API_KEY")
+    extra_headers_raw = os.environ.get("LLM_EXTRA_HEADERS")
+    extra_headers = json.loads(extra_headers_raw) if extra_headers_raw else None
     session_manager = SessionManager(
         llm_base_url=base_url,
         model=model,
         llm_provider=provider,
-        llm_api_key=api_key
+        llm_api_key=api_key,
+        llm_extra_headers=extra_headers
     )
     asyncio.create_task(run_scheduler(session_manager, manager))
     print("✅ Gateway server started")

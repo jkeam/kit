@@ -33,6 +33,7 @@ class PersonalAssistant:
         use_embeddings: bool = True,
         provider: str = "llamastack",
         api_key: Optional[str] = None,
+        extra_headers: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize the assistant.
@@ -46,14 +47,20 @@ class PersonalAssistant:
                 provider such as "ollama" or "openai"
             api_key: API key for OpenAI-compatible providers that require one
                 (e.g. OpenCode Zen). Not needed for LlamaStack or Ollama.
+            extra_headers: Extra HTTP headers sent with every LLM request
+                (e.g. {"x-opencode-session": "..."} for OpenCode Zen).
         """
         if provider in OPENAI_COMPATIBLE_PROVIDERS:
             # Any OpenAI-compatible endpoint (Ollama's /v1 endpoint, OpenCode
             # Zen, OpenAI itself, etc.) speaks the standard chat-completions
             # API used below.
-            self.client = OpenAI(base_url=base_url, api_key=api_key or "not-needed")
+            self.client = OpenAI(
+                base_url=base_url,
+                api_key=api_key or "not-needed",
+                default_headers=extra_headers,
+            )
         else:
-            self.client = LlamaStackClient(base_url=base_url)
+            self.client = LlamaStackClient(base_url=base_url, default_headers=extra_headers)
         self.provider = provider
         self.model = model
         self.workspace_dir = Path(workspace_dir)

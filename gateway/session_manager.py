@@ -43,12 +43,14 @@ class SessionManager:
         llm_base_url: str = "http://localhost:8321",
         model: str = "redhat-maas/qwen3-14b",
         llm_provider: str = "llamastack",
-        llm_api_key: Optional[str] = None
+        llm_api_key: Optional[str] = None,
+        llm_extra_headers: Optional[Dict[str, str]] = None
     ):
         self.llm_base_url = llm_base_url
         self.model = model
         self.llm_provider = llm_provider
         self.llm_api_key = llm_api_key
+        self.llm_extra_headers = llm_extra_headers
         self.sessions: Dict[str, Session] = {}
 
     def get_session(self, platform: str, user_id: str) -> Session:
@@ -70,7 +72,8 @@ class SessionManager:
                 base_url=self.llm_base_url,
                 model=self.model,
                 provider=self.llm_provider,
-                api_key=self.llm_api_key
+                api_key=self.llm_api_key,
+                extra_headers=self.llm_extra_headers
             )
 
             self.sessions[session_id] = Session(
