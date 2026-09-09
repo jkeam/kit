@@ -6,6 +6,11 @@
     --pf-v5-global--FontFamily--heading: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* Masthead */
+.pf-v5-c-masthead__content {
+    justify-content: flex-end;
+}
+
 /* Brand */
 .brand-link {
     display: inline-flex;
@@ -146,6 +151,17 @@
     border-radius: 12px;
 }
 
+/* PatternFly draws a button's hover/focus border via an ::after overlay
+   with its own hardcoded border-radius (3px), which doesn't follow the
+   button's own radius above - match it explicitly for every rounded button. */
+#send-button::after,
+#memory-search-btn::after,
+#save-persona::after,
+#refresh-schedules::after,
+#refresh-skills::after {
+    border-radius: 12px;
+}
+
 /* Info Panel */
 .info-card-body {
     min-height: 500px;
@@ -162,7 +178,7 @@
     display: block;
 }
 
-/* Tab switching */
+/* Tab Switching */
 .pf-v5-c-tabs__item.pf-m-current .pf-v5-c-tabs__link {
     border-bottom-color: var(--pf-v5-global--primary-color--100);
 }
@@ -191,14 +207,6 @@
 
 #refresh-schedules,
 #refresh-skills {
-    border-radius: 12px;
-}
-
-/* PatternFly draws the secondary button's hover/focus border via an
-   ::after overlay with its own hardcoded border-radius (3px), which
-   doesn't follow the button's own radius above - match it explicitly. */
-#refresh-schedules::after,
-#refresh-skills::after {
     border-radius: 12px;
 }
 
