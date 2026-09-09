@@ -41,10 +41,14 @@ class SessionManager:
     def __init__(
         self,
         llm_base_url: str = "http://localhost:8321",
-        model: str = "redhat-maas/qwen3-14b"
+        model: str = "redhat-maas/qwen3-14b",
+        llm_provider: str = "llamastack",
+        llm_api_key: Optional[str] = None
     ):
         self.llm_base_url = llm_base_url
         self.model = model
+        self.llm_provider = llm_provider
+        self.llm_api_key = llm_api_key
         self.sessions: Dict[str, Session] = {}
 
     def get_session(self, platform: str, user_id: str) -> Session:
@@ -64,7 +68,9 @@ class SessionManager:
             # Create new session with dedicated agent
             agent = PersonalAssistant(
                 base_url=self.llm_base_url,
-                model=self.model
+                model=self.model,
+                provider=self.llm_provider,
+                api_key=self.llm_api_key
             )
 
             self.sessions[session_id] = Session(

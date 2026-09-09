@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Generator
 from llama_stack_client import LlamaStackClient
+from openai import OpenAI
 
 from runtime.memory import MemoryManager
 from runtime.embeddings import EmbeddingsManager
@@ -15,6 +16,10 @@ from runtime.skills import SkillsManager
 from tools.core import TOOLS, execute_tool
 
 MAX_TOOL_ROUNDS = 10
+
+# Providers that speak plain OpenAI-compatible chat completions
+# (as opposed to "llamastack", which uses the LlamaStack client/server).
+OPENAI_COMPATIBLE_PROVIDERS = {"ollama", "openai"}
 
 
 class PersonalAssistant:
@@ -25,18 +30,31 @@ class PersonalAssistant:
         base_url: str = "http://localhost:8321",
         model: str = "redhat-maas/qwen3-14b",
         workspace_dir: str = "workspace",
-        use_embeddings: bool = True
+        use_embeddings: bool = True,
+        provider: str = "llamastack",
+        api_key: Optional[str] = None,
     ):
         """
         Initialize the assistant.
 
         Args:
-            base_url: LlamaStack server URL
+            base_url: LLM server URL (LlamaStack, Ollama, OpenCode Zen, etc.)
             model: Model ID to use
             workspace_dir: Workspace directory for memory files
             use_embeddings: Enable vector embeddings for semantic search
+            provider: "llamastack" (default) or an OpenAI-compatible
+                provider such as "ollama" or "openai"
+            api_key: API key for OpenAI-compatible providers that require one
+                (e.g. OpenCode Zen). Not needed for LlamaStack or Ollama.
         """
-        self.client = LlamaStackClient(base_url=base_url)
+        if provider in OPENAI_COMPATIBLE_PROVIDERS:
+            # Any OpenAI-compatible endpoint (Ollama's /v1 endpoint, OpenCode
+            # Zen, OpenAI itself, etc.) speaks the standard chat-completions
+            # API used below.
+            self.client = OpenAI(base_url=base_url, api_key=api_key or "not-needed")
+        else:
+            self.client = LlamaStackClient(base_url=base_url)
+        self.provider = provider
         self.model = model
         self.workspace_dir = Path(workspace_dir)
         self.memory = MemoryManager(workspace_dir)

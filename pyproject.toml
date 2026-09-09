@@ -14,6 +14,7 @@ dependencies = [
     "ramalama>=0.23.0",
     "llama-stack>=0.7.2",
     "llama-stack-client>=0.7.4",
+    "openai>=1.0.0",
 
     # Web search and content
     "tavily-python>=0.5.0",

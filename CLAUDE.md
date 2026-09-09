@@ -34,11 +34,15 @@ python -m gateway.server
 ```bash
 # Option A: Ollama
 ollama pull qwen3:14b && ollama serve
-# Set LLM_BASE_URL=http://localhost:11434 and LLM_MODEL=qwen3:14b in .env
+# Set LLM_PROVIDER=ollama, LLM_BASE_URL=http://localhost:11434/v1, LLM_MODEL=qwen3:14b in .env
 
 # Option B: LlamaStack / OGX
 uv run llama stack run llama-stack-run.yaml
-# Starts on http://127.0.0.1:8321, uses defaults in .env
+# Starts on http://127.0.0.1:8321, uses defaults in .env (LLM_PROVIDER=llamastack)
+
+# Option C: OpenCode Zen (https://opencode.ai/zen)
+# Set LLM_PROVIDER=openai, LLM_BASE_URL=https://opencode.ai/zen/v1,
+# LLM_MODEL=<model id>, LLM_API_KEY=<your OpenCode Zen key> in .env
 ```
 
 **CLI Usage**
@@ -181,6 +185,10 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
 - Model: qwen3-14b
 - Base URL: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
 - **Note**: API key is hardcoded (not secure for production)
+
+**LLM provider selection** (`runtime/agent.py`, `gateway/server.py`)
+- `LLM_PROVIDER` env var chooses the client: `llamastack` (default, uses `LlamaStackClient`) or an OpenAI-compatible provider (`ollama`, `openai`), which uses the standard `openai` client instead
+- `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` are passed through to whichever client is selected; OpenAI-compatible providers need a `/v1`-suffixed base URL (e.g. OpenCode Zen: `https://opencode.ai/zen/v1`)
 
 **pyproject.toml** - Python dependencies
 - Core: llama-stack, llama-stack-client, ramalama
