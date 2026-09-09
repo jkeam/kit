@@ -1,5 +1,11 @@
 /* Custom styles for Personal Assistant with PatternFly */
 
+/* Font */
+:root {
+    --pf-v5-global--FontFamily--text: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --pf-v5-global--FontFamily--heading: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
 /* Brand */
 .brand-link {
     display: inline-flex;
