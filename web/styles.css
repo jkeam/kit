@@ -279,9 +279,84 @@
     min-height: 200px;
 }
 
-/* Responsive Grid */
+/* Wrap tabs onto multiple rows instead of letting PatternFly's tabs
+   overflow:hidden silently clip whichever ones don't fit in one row.
+   No-op whenever all tabs already fit on one line (e.g. wide desktop). */
+.pf-v5-c-tabs__list {
+    flex-wrap: wrap;
+    row-gap: 4px;
+}
+
+.pf-v5-c-tabs__item {
+    flex: 0 0 auto;
+}
+
+/* Responsive */
 @media (max-width: 768px) {
     .pf-v5-l-grid__item.pf-m-6-col {
         grid-column: span 12;
+    }
+
+    .pf-v5-c-page__main-section {
+        padding: 12px;
+    }
+
+    .pf-v5-l-grid.pf-m-gutter {
+        row-gap: 12px;
+    }
+
+    .chat-card-body,
+    .info-card-body {
+        max-height: calc(100vh - 320px);
+        min-height: 320px;
+    }
+
+    /* Let card headers wrap instead of squeezing title + actions/tabs */
+    .pf-v5-c-card__header {
+        flex-wrap: wrap;
+        row-gap: 8px;
+    }
+
+    .pf-v5-c-card__actions {
+        flex-wrap: wrap;
+        margin-left: 0 !important;
+    }
+
+    .pf-v5-c-tabs__link {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+
+    .message {
+        max-width: 90%;
+    }
+
+    /* Keep the send button next to the textarea, don't let it wrap below */
+    .pf-v5-c-card__footer .pf-v5-c-input-group {
+        flex-wrap: nowrap;
+    }
+
+    #send-button {
+        white-space: nowrap;
+        min-height: 44px;
+    }
+
+    /* 16px prevents iOS Safari from auto-zooming in on focus */
+    #chat-input,
+    #memory-search-input,
+    .persona-editor {
+        font-size: 16px;
+    }
+}
+
+@media (max-width: 480px) {
+    .pf-v5-c-masthead__brand .pf-v5-c-brand {
+        font-size: 1.2rem !important;
+    }
+
+    .chat-card-body,
+    .info-card-body {
+        max-height: calc(100vh - 280px);
+        min-height: 260px;
     }
 }
