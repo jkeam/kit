@@ -67,13 +67,19 @@ def schedule_list() -> str:
     """
     schedules_file = Path("workspace/schedules/schedules.json")
 
+    no_schedules_message = (
+        "No schedules found. Ask Kit to create a schedule (e.g. \"schedule a daily "
+        "reminder at 9am\") and I'll set it up using cron syntax — daily at 9am, "
+        "every 5 minutes, weekly on Mondays, etc."
+    )
+
     if not schedules_file.exists():
-        return "No schedules found"
+        return no_schedules_message
 
     schedules = json.loads(schedules_file.read_text())
 
     if not schedules:
-        return "No schedules found"
+        return no_schedules_message
 
     # Format output
     lines = ["Scheduled Tasks:\n"]

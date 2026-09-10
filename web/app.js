@@ -1802,7 +1802,7 @@ async function loadSchedules() {
             body: JSON.stringify({
                 platform: PLATFORM,
                 user_id: USER_ID,
-                message: 'Use schedule_list to show all schedules'
+                message: 'Call the schedule_list tool and reply with ONLY its exact output, verbatim, with no additional commentary, greeting, or suggestions.'
             })
         });
 
