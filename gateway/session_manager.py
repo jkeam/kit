@@ -53,12 +53,10 @@ class Session:
     agent: PersonalAssistant
     created_at: datetime = field(default_factory=datetime.now)
     last_active: datetime = field(default_factory=datetime.now)
-    message_count: int = 0
 
     def update_activity(self):
         """Update last active timestamp."""
         self.last_active = datetime.now()
-        self.message_count += 1
 
 
 class SessionManager:
@@ -366,7 +364,7 @@ class SessionManager:
             "agent_id": session.agent_id,
             "created_at": session.created_at.isoformat(),
             "last_active": session.last_active.isoformat(),
-            "message_count": session.message_count
+            "message_count": len(self.get_messages(session_id))
         }
 
     def clear_session(self, session_id: str) -> bool:

@@ -295,7 +295,7 @@ async def list_sessions():
             agent_id=s.agent_id,
             created_at=s.created_at.isoformat(),
             last_active=s.last_active.isoformat(),
-            message_count=s.message_count
+            message_count=len(session_manager.get_messages(s.session_id))
         )
         for s in sessions
     ]
