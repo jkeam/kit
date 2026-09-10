@@ -158,6 +158,8 @@ class AgentRegistry:
         tool_overrides: Optional[ToolList] = None,
         skill_overrides: Optional[ToolList] = None,
         soul_overrides: Optional[str] = None,
+        model: Optional[str] = None,
+        provider: Optional[str] = None,
     ) -> AgentDefinition:
         if id == KIT_AGENT_ID:
             raise ValueError("'kit' is reserved for the built-in manager agent")
@@ -183,6 +185,10 @@ class AgentRegistry:
             "tools": tools,
             "skills": skills,
         }
+        if model is not None:
+            meta["model"] = model
+        if provider is not None:
+            meta["provider"] = provider
         self._agent_meta_path(id).write_text(json.dumps(meta, indent=2))
 
         soul_path = self._agent_soul_path(id)
@@ -199,6 +205,8 @@ class AgentRegistry:
         tools: Optional[ToolList] = None,
         skills: Optional[ToolList] = None,
         soul: Optional[str] = None,
+        model: Optional[str] = None,
+        provider: Optional[str] = None,
     ) -> AgentDefinition:
         if id == KIT_AGENT_ID:
             raise ValueError("'kit' cannot be edited via update_agent - edit workspace/SOUL.md directly")
@@ -217,6 +225,10 @@ class AgentRegistry:
             meta["name"] = name
         if description is not None:
             meta["description"] = description
+        if model is not None:
+            meta["model"] = model if model else None
+        if provider is not None:
+            meta["provider"] = provider if provider else None
 
         path.write_text(json.dumps(meta, indent=2))
 

@@ -394,6 +394,8 @@ class CreateAgentRequest(BaseModel):
     tools: Optional[Union[List[str], Literal["*"]]] = None
     skills: Optional[Union[List[str], Literal["*"]]] = None
     soul: Optional[str] = None
+    model: Optional[str] = None
+    provider: Optional[str] = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -402,6 +404,8 @@ class UpdateAgentRequest(BaseModel):
     tools: Optional[Union[List[str], Literal["*"]]] = None
     skills: Optional[Union[List[str], Literal["*"]]] = None
     soul: Optional[str] = None
+    model: Optional[str] = None
+    provider: Optional[str] = None
 
 
 def _require_session_manager() -> SessionManager:
@@ -447,6 +451,8 @@ async def create_agent(request: CreateAgentRequest):
             tool_overrides=request.tools,
             skill_overrides=request.skills,
             soul_overrides=request.soul,
+            model=request.model,
+            provider=request.provider,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -473,6 +479,8 @@ async def update_agent(agent_id: str, request: UpdateAgentRequest):
             tools=request.tools,
             skills=request.skills,
             soul=request.soul,
+            model=request.model,
+            provider=request.provider,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

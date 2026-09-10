@@ -8,8 +8,8 @@ const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${wi
 const PLATFORM = 'web';
 const USER_ID = 'browser';
 const KIT_AGENT_ID = 'kit';
-const KIT_AVATAR_COLOR = '#1565c0';
-const AVATAR_PALETTE = ['#e07b39', '#2b7a58', '#1164a3', '#1976d2', '#c0392b', '#0f8b8d', '#b8860b', '#5b6ee1'];
+const KIT_AVATAR_COLOR = '#ee0000';
+const AVATAR_PALETTE = ['#ca6c0f', '#37a3a3', '#5e40be', '#63993d', '#a60000', '#147878', '#b98412', '#876fd4'];
 
 // Which team member the chat panel is currently talking to. Mirrors the
 // server's make_session_id: Kit keeps the original {platform}:{user_id}
@@ -697,8 +697,15 @@ async function renderMemberDetails(agentId) {
     `;
 
     html += `
+        <div class="details-section">
+            <div class="details-section-label">Model</div>
+            <p class="details-meta-row"><strong>Model:</strong> ${escapeHtml(agent.model || '(default)')}</p>
+            <p class="details-meta-row"><strong>Provider:</strong> ${escapeHtml(agent.provider || '(default)')}</p>
+        </div>
+    `;
+
+    html += `
         <div class="details-actions">
-            <button class="btn btn-primary" id="details-talk-btn">Message ${escapeHtml(agent.name)}</button>
             ${!isKit ? '<button class="btn btn-secondary" id="details-edit-btn">Edit</button>' : ''}
             ${!isKit ? '<button class="btn btn-danger" id="details-delete-btn">Delete</button>' : ''}
         </div>
@@ -727,7 +734,6 @@ async function renderMemberDetails(agentId) {
 
     detailsBody.innerHTML = html;
 
-    document.getElementById('details-talk-btn').addEventListener('click', () => selectMember(agentId));
     if (!isKit) {
         document.getElementById('details-edit-btn').addEventListener('click', () => renderMemberEditForm(agentId));
         document.getElementById('details-delete-btn').addEventListener('click', () => deleteAgentFromDetails(agentId));
@@ -767,6 +773,14 @@ function renderMemberEditForm(agentId) {
             <input class="form-control" id="edit-skills" type="text" value="${escapeAttr(toolOrSkillListToInputValue(agent.skills))}">
         </div>
         <div class="form-group">
+            <label class="form-label">Model (blank for default)</label>
+            <input class="form-control" id="edit-model" type="text" value="${escapeAttr(agent.model || '')}" placeholder="e.g. gpt-4o, qwen3:14b">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Provider (blank for default)</label>
+            <input class="form-control" id="edit-provider" type="text" value="${escapeAttr(agent.provider || '')}" placeholder="e.g. ollama, openai, llamastack">
+        </div>
+        <div class="form-group">
             <label class="form-label">Soul (persona)</label>
             <textarea class="form-control" id="edit-soul" rows="10">${escapeHtml(agent.soul || '')}</textarea>
         </div>
@@ -789,6 +803,8 @@ async function saveMemberEdit(agentId) {
         description: document.getElementById('edit-description').value.trim(),
         tools: parseToolOrSkillInput(document.getElementById('edit-tools').value),
         skills: parseToolOrSkillInput(document.getElementById('edit-skills').value),
+        model: document.getElementById('edit-model').value.trim() || null,
+        provider: document.getElementById('edit-provider').value.trim() || null,
         soul: document.getElementById('edit-soul').value,
     };
 

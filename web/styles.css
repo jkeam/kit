@@ -3,33 +3,33 @@
 :root {
     --font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 
-    --rail-bg: #0b1a2e;
+    --rail-bg: #1f1f1f;
     --rail-btn-hover: rgba(255, 255, 255, 0.1);
-    --rail-btn-active-bg: #1565c0;
+    --rail-btn-active-bg: #ee0000;
 
-    --sidebar-bg: #0e2340;
-    --sidebar-bg-header: #0b1a2e;
+    --sidebar-bg: #292929;
+    --sidebar-bg-header: #1f1f1f;
     --sidebar-text: #ffffff;
-    --sidebar-text-muted: #a8c4d8;
+    --sidebar-text-muted: #c7c7c7;
     --sidebar-hover: rgba(255, 255, 255, 0.08);
-    --sidebar-active-bg: #1976d2;
+    --sidebar-active-bg: #ee0000;
 
-    --accent: #1565c0;
-    --accent-hover: #0d47a1;
-    --accent-light: #e3f2fd;
+    --accent: #ee0000;
+    --accent-hover: #a60000;
+    --accent-light: #fef0f0;
 
     --main-bg: #ffffff;
-    --panel-bg: #fbfaf9;
-    --border: #e2e0e4;
-    --border-strong: #d1cfd4;
+    --panel-bg: #f2f2f2;
+    --border: #e0e0e0;
+    --border-strong: #c7c7c7;
 
-    --text-primary: #1d1c1d;
-    --text-secondary: #696a6c;
-    --text-tertiary: #8a8a8e;
+    --text-primary: #151515;
+    --text-secondary: #4d4d4d;
+    --text-tertiary: #707070;
 
-    --green: #2eb67d;
-    --orange: #ecb22e;
-    --red: #e01e5a;
+    --green: #63993d;
+    --orange: #f5921b;
+    --red: #f0561d;
 
     --radius-sm: 6px;
     --radius-md: 10px;
@@ -82,7 +82,7 @@ button, input, textarea {
     width: 36px;
     height: 36px;
     border-radius: 10px;
-    background: linear-gradient(135deg, #1976d2, #1565c0);
+    background: linear-gradient(135deg, #ee0000, #a60000);
     color: #fff;
     display: flex;
     align-items: center;
@@ -361,7 +361,7 @@ button, input, textarea {
     min-height: 64px;
 }
 
-.chat-header-menu {
+button.chat-header-menu {
     display: none;
 }
 
@@ -1160,7 +1160,7 @@ textarea.form-control {
         display: block;
     }
 
-    .chat-header-menu {
+    button.chat-header-menu {
         display: flex;
     }
 
