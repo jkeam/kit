@@ -126,6 +126,54 @@ function escapeAttr(str) {
     return escapeHtml(str).replace(/"/g, '&quot;');
 }
 
+if (typeof marked !== 'undefined') {
+    marked.use({
+        breaks: true,
+        gfm: true,
+        renderer: {
+            code(token) {
+                const text = (typeof token === 'object' ? token.text : token) || '';
+                const lang = (typeof token === 'object' ? token.lang : arguments[1]) || '';
+                let highlighted;
+                if (typeof hljs !== 'undefined') {
+                    try {
+                        if (lang && hljs.getLanguage(lang)) {
+                            highlighted = hljs.highlight(text, { language: lang }).value;
+                        } else {
+                            highlighted = hljs.highlightAuto(text).value;
+                        }
+                    } catch (e) {
+                        highlighted = escapeHtml(text);
+                    }
+                } else {
+                    highlighted = escapeHtml(text);
+                }
+                const langLabel = lang ? `<span class="code-lang-label">${escapeHtml(lang)}</span>` : '';
+                return `<div class="code-block-wrapper">${langLabel}<pre><code class="hljs">${highlighted}</code></pre></div>`;
+            }
+        }
+    });
+}
+
+if (typeof DOMPurify !== 'undefined') {
+    DOMPurify.addHook('afterSanitizeAttributes', function(node) {
+        if (node.tagName === 'A') {
+            node.setAttribute('target', '_blank');
+            node.setAttribute('rel', 'noopener noreferrer');
+        }
+    });
+}
+
+function renderMarkdown(text) {
+    if (!text) return '';
+    if (typeof marked === 'undefined') return escapeHtml(text);
+    let html = marked.parse(text);
+    if (typeof DOMPurify !== 'undefined') {
+        html = DOMPurify.sanitize(html);
+    }
+    return html;
+}
+
 function initialsFor(name) {
     if (!name) return '?';
     const parts = name.trim().split(/\s+/);
@@ -303,7 +351,12 @@ function addMessage(content, role = 'user', id = null, sender = null) {
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
-    contentDiv.textContent = content;
+    if (role === 'assistant') {
+        contentDiv.classList.add('markdown');
+        contentDiv.innerHTML = renderMarkdown(content);
+    } else {
+        contentDiv.textContent = content;
+    }
 
     body.appendChild(headerLine);
     body.appendChild(contentDiv);
@@ -1702,7 +1755,7 @@ function handleWebSocketMessage(data) {
                 headerLine.appendChild(timeSpan);
 
                 streamingContentDiv = document.createElement('div');
-                streamingContentDiv.className = 'message-content';
+                streamingContentDiv.className = 'message-content markdown';
 
                 bodyDiv.appendChild(headerLine);
                 bodyDiv.appendChild(streamingContentDiv);
@@ -1716,7 +1769,7 @@ function handleWebSocketMessage(data) {
         case 'text_delta':
             if (isOwnSession && streamingContentDiv) {
                 streamingText += data.content;
-                streamingContentDiv.textContent = streamingText;
+                streamingContentDiv.innerHTML = renderMarkdown(streamingText);
                 scrollChatToBottom();
             }
             break;
