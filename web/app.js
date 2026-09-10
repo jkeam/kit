@@ -76,14 +76,8 @@ const sendButton = document.getElementById('send-button');
 const clearChatButton = document.getElementById('clear-chat-button');
 const connectionStatus = document.getElementById('connection-status');
 const messageCountSpan = document.getElementById('message-count');
-const memorySearchInput = document.getElementById('memory-search-input');
-const memorySearchBtn = document.getElementById('memory-search-btn');
-const memoryResults = document.getElementById('memory-results');
 const refreshSchedulesBtn = document.getElementById('refresh-schedules');
 const schedulesList = document.getElementById('schedules-list');
-const refreshSkillsBtn = document.getElementById('refresh-skills');
-const skillsList = document.getElementById('skills-list');
-const toolsList = document.getElementById('tools-list');
 const sessionsList = document.getElementById('sessions-list');
 const refreshActivityBtn = document.getElementById('refresh-activity');
 const activityList = document.getElementById('activity-list');
@@ -760,9 +754,26 @@ async function renderMemberDetails(agentId) {
 
     html += `
         <div class="details-section">
-            <div class="details-section-label">Access</div>
-            <p class="details-meta-row"><strong>Tools:</strong> ${escapeHtml(formatToolOrSkillList(agent.tools))}</p>
-            <p class="details-meta-row"><strong>Skills:</strong> ${escapeHtml(formatToolOrSkillList(agent.skills))}</p>
+            <div class="details-section-label">Memory</div>
+            <div class="composer-row">
+                <input id="details-memory-search-input" type="text" placeholder="Search memories...">
+                <button id="details-memory-search-btn" class="btn btn-primary">Search</button>
+            </div>
+            <div id="details-memory-results"></div>
+        </div>
+    `;
+
+    html += `
+        <div class="details-section">
+            <div class="details-section-label">Tools</div>
+            <div id="details-tools-list" class="tools-list"><div class="spinner" style="margin:12px auto;"></div></div>
+        </div>
+    `;
+
+    html += `
+        <div class="details-section">
+            <div class="details-section-label">Skills</div>
+            <div id="details-skills-list"><div class="spinner" style="margin:12px auto;"></div></div>
         </div>
     `;
 
@@ -815,6 +826,16 @@ async function renderMemberDetails(agentId) {
         savePersonaBtn.addEventListener('click', () => savePersonaFrom(personaEditor, personaStatus, savePersonaBtn));
     }
 
+    const detailsMemoryBtn = document.getElementById('details-memory-search-btn');
+    const detailsMemoryInput = document.getElementById('details-memory-search-input');
+    if (detailsMemoryBtn) detailsMemoryBtn.addEventListener('click', searchDetailsMemory);
+    if (detailsMemoryInput) {
+        detailsMemoryInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); searchDetailsMemory(); }
+        });
+    }
+    loadDetailsTools(agentId);
+    loadDetailsSkills(agentId);
     loadMiniActivity(agentId);
 }
 
@@ -1007,14 +1028,12 @@ addTeammateBtn.addEventListener('click', () => {
     closeMobileSidebar();
 });
 
-// --- Workspace overlay: Sessions / Team Activity / Memory / Tools / Schedules / Skills ---
+// --- Workspace overlay: Team Activity / Schedules / Sessions ---
 // Workspace-wide sections that aren't tied to any one team member.
 
 const WORKSPACE_LOADERS = {
     activity: loadActivity,
-    tools: loadTools,
     schedules: loadSchedules,
-    skills: loadSkills,
     sessions: loadSessions,
 };
 
@@ -1077,22 +1096,57 @@ async function loadSessions() {
     }
 }
 
-// --- Tools tab: dynamic view of the global tool registry ---
+// --- Details panel: Memory / Tools / Skills (scoped to current agent) ---
 
-async function loadTools() {
-    toolsList.innerHTML = '<div class="spinner"></div>';
+async function loadDetailsTools(agentId) {
+    const container = document.getElementById('details-tools-list');
+    if (!container) return;
+    container.innerHTML = '<div class="spinner" style="margin:12px auto;"></div>';
     try {
         const response = await apiFetch(`${API_BASE}/tools`);
         if (!response.ok) throw new Error('Failed to load tools');
-        const tools = await response.json();
-        toolsList.innerHTML = tools.map(tool => `
+        const allTools = await response.json();
+        const agent = agentsById[agentId];
+        const allowed = agent ? agent.tools : '*';
+        const tools = allowed === '*' ? allTools : allTools.filter(t => allowed.includes(t.name));
+        if (tools.length === 0) {
+            container.innerHTML = '<div class="empty-state" style="padding:10px 0;">No tools</div>';
+            return;
+        }
+        container.innerHTML = tools.map(tool => `
             <div class="tool-entry">
                 <div class="tool-entry-name">${escapeHtml(tool.name)}</div>
                 <div class="tool-entry-desc">${escapeHtml(tool.description || '')}</div>
             </div>
         `).join('');
     } catch (error) {
-        toolsList.innerHTML = `<p class="empty-state">Error loading tools: ${escapeHtml(error.message)}</p>`;
+        container.innerHTML = `<div class="empty-state" style="padding:10px 0;">Error: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+async function loadDetailsSkills(agentId) {
+    const container = document.getElementById('details-skills-list');
+    if (!container) return;
+    container.innerHTML = '<div class="spinner" style="margin:12px auto;"></div>';
+    try {
+        const response = await apiFetch(`${API_BASE}/skills`);
+        if (!response.ok) throw new Error('Failed to load skills');
+        const allSkills = await response.json();
+        const agent = agentsById[agentId];
+        const allowed = agent ? agent.skills : '*';
+        const skills = allowed === '*' ? allSkills : allSkills.filter(s => allowed.includes(s.name));
+        if (skills.length === 0) {
+            container.innerHTML = '<div class="empty-state" style="padding:10px 0;">No skills</div>';
+            return;
+        }
+        container.innerHTML = skills.map(skill => `
+            <div class="tool-entry">
+                <div class="tool-entry-name">${escapeHtml(skill.name)}</div>
+                <div class="tool-entry-desc">${escapeHtml(skill.description || '')}</div>
+            </div>
+        `).join('');
+    } catch (error) {
+        container.innerHTML = `<div class="empty-state" style="padding:10px 0;">Error: ${escapeHtml(error.message)}</div>`;
     }
 }
 
@@ -1149,57 +1203,47 @@ async function loadActivity() {
 
 refreshActivityBtn.addEventListener('click', loadActivity);
 
-// Memory search
-async function searchMemory() {
-    const query = memorySearchInput.value.trim();
+async function searchDetailsMemory() {
+    const input = document.getElementById('details-memory-search-input');
+    const btn = document.getElementById('details-memory-search-btn');
+    const results = document.getElementById('details-memory-results');
+    if (!input || !btn || !results) return;
+
+    const query = input.value.trim();
     if (!query) return;
 
-    memorySearchBtn.disabled = true;
-    memorySearchBtn.textContent = 'Searching...';
-    memoryResults.innerHTML = '<div class="spinner"></div>';
+    btn.disabled = true;
+    btn.textContent = 'Searching...';
+    results.innerHTML = '<div class="spinner" style="margin:12px auto;"></div>';
 
     try {
         const response = await apiFetch(`${API_BASE}/chat`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 platform: PLATFORM,
                 user_id: USER_ID,
+                agent_id: currentAgentId,
                 message: `Use memory_search to find: ${query}`
             })
         });
 
         if (!response.ok) throw new Error('Search failed');
-
         const data = await response.json();
 
-        // Parse search results from response
-        const results = data.response;
-
-        memoryResults.innerHTML = `
+        results.innerHTML = `
             <div class="memory-item">
                 <div class="memory-item-type">Search Results</div>
-                <div class="memory-item-content">${escapeHtml(results)}</div>
+                <div class="memory-item-content">${escapeHtml(data.response)}</div>
             </div>
         `;
-
     } catch (error) {
-        memoryResults.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
+        results.innerHTML = `<div class="empty-state" style="padding:10px 0;">Error: ${escapeHtml(error.message)}</div>`;
     } finally {
-        memorySearchBtn.disabled = false;
-        memorySearchBtn.textContent = 'Search';
+        btn.disabled = false;
+        btn.textContent = 'Search';
     }
 }
-
-memorySearchBtn.addEventListener('click', searchMemory);
-memorySearchInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        e.preventDefault();
-        searchMemory();
-    }
-});
 
 // Load schedules
 async function loadSchedules() {
@@ -1241,45 +1285,6 @@ async function loadSchedules() {
 
 refreshSchedulesBtn.addEventListener('click', loadSchedules);
 
-// Load skills
-async function loadSkills() {
-    refreshSkillsBtn.disabled = true;
-    refreshSkillsBtn.textContent = 'Loading...';
-    skillsList.innerHTML = '<div class="spinner"></div>';
-
-    try {
-        const response = await apiFetch(`${API_BASE}/chat`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                platform: PLATFORM,
-                user_id: USER_ID,
-                message: 'Use skill_list to show all skills'
-            })
-        });
-
-        if (!response.ok) throw new Error('Failed to load skills');
-
-        const data = await response.json();
-
-        // Display raw response (skills formatted by tool)
-        skillsList.innerHTML = `
-            <div class="schedule-card">
-                <pre style="white-space: pre-wrap; font-size: 13px; margin: 0;">${escapeHtml(data.response)}</pre>
-            </div>
-        `;
-
-    } catch (error) {
-        skillsList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
-    } finally {
-        refreshSkillsBtn.disabled = false;
-        refreshSkillsBtn.textContent = 'Refresh';
-    }
-}
-
-refreshSkillsBtn.addEventListener('click', loadSkills);
 
 // WebSocket connection
 function connectWebSocket() {

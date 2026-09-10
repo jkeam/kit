@@ -26,17 +26,8 @@
             <button class="rail-btn" data-panel="activity" title="Team Activity" aria-label="Team Activity">
                 <i class="fas fa-bolt"></i>
             </button>
-            <button class="rail-btn" data-panel="memory" title="Memory" aria-label="Memory">
-                <i class="fas fa-brain"></i>
-            </button>
-            <button class="rail-btn" data-panel="tools" title="Tools" aria-label="Tools">
-                <i class="fas fa-toolbox"></i>
-            </button>
             <button class="rail-btn" data-panel="schedules" title="Schedules" aria-label="Schedules">
                 <i class="fas fa-clock"></i>
-            </button>
-            <button class="rail-btn" data-panel="skills" title="Skills" aria-label="Skills">
-                <i class="fas fa-puzzle-piece"></i>
             </button>
             <button class="rail-btn" data-panel="sessions" title="Sessions" aria-label="Sessions">
                 <i class="fas fa-layer-group"></i>
@@ -118,7 +109,7 @@
         </aside>
     </div>
 
-    <!-- Workspace overlay: Team Activity / Memory / Tools / Schedules / Skills / Sessions -->
+    <!-- Workspace overlay: Team Activity / Schedules / Sessions -->
     <div class="workspace-overlay" id="workspace-overlay" hidden>
         <div class="workspace-modal">
             <div class="workspace-modal-header">
@@ -126,17 +117,8 @@
                     <button class="workspace-tab" data-tab="activity">
                         <i class="fas fa-bolt"></i> Team Activity
                     </button>
-                    <button class="workspace-tab" data-tab="memory">
-                        <i class="fas fa-brain"></i> Memory
-                    </button>
-                    <button class="workspace-tab" data-tab="tools">
-                        <i class="fas fa-toolbox"></i> Tools
-                    </button>
                     <button class="workspace-tab" data-tab="schedules">
                         <i class="fas fa-clock"></i> Schedules
-                    </button>
-                    <button class="workspace-tab" data-tab="skills">
-                        <i class="fas fa-puzzle-piece"></i> Skills
                     </button>
                     <button class="workspace-tab" data-tab="sessions">
                         <i class="fas fa-layer-group"></i> Sessions
@@ -152,27 +134,9 @@
                     <div id="activity-list"></div>
                 </div>
 
-                <div id="memory-tab" class="tab-content">
-                    <div class="composer-row">
-                        <input id="memory-search-input" type="text" placeholder="Search memories...">
-                        <button id="memory-search-btn" class="btn btn-primary">Search</button>
-                    </div>
-                    <div id="memory-results"></div>
-                </div>
-
-                <div id="tools-tab" class="tab-content">
-                    <p class="tab-hint">Kit's full tool registry. Each team member is scoped to a subset of these (see their details panel).</p>
-                    <div id="tools-list" class="tools-list"></div>
-                </div>
-
                 <div id="schedules-tab" class="tab-content">
                     <button id="refresh-schedules" class="btn btn-secondary">Refresh</button>
                     <div id="schedules-list"></div>
-                </div>
-
-                <div id="skills-tab" class="tab-content">
-                    <button id="refresh-skills" class="btn btn-secondary">Refresh</button>
-                    <div id="skills-list"></div>
                 </div>
 
                 <div id="sessions-tab" class="tab-content">

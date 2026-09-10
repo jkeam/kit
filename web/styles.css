@@ -890,7 +890,7 @@ textarea.form-control {
     color: var(--text-primary);
 }
 
-/* ---------- Workspace overlay (Sessions / Activity / Memory / Tools / Schedules / Skills) ---------- */
+/* ---------- Workspace overlay (Team Activity / Schedules / Sessions) ---------- */
 
 .workspace-overlay {
     position: fixed;
