@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional, Set
+from typing import List, Dict, Any, Optional, Set, Union, Literal
 from pathlib import Path
 from datetime import datetime, timezone
 import uvicorn
@@ -27,7 +27,7 @@ import secrets
 
 import os
 from env_config import env_int
-from gateway.session_manager import SessionManager
+from gateway.session_manager import SessionManager, make_session_id
 from gateway.scheduler import run_scheduler
 
 
@@ -73,6 +73,7 @@ class ChatRequest(BaseModel):
     platform: str
     user_id: str
     message: str
+    agent_id: str = "kit"
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -88,6 +89,7 @@ class SessionStats(BaseModel):
     session_id: str
     platform: str
     user_id: str
+    agent_id: str
     created_at: str
     last_active: str
     message_count: int
@@ -140,7 +142,8 @@ async def lifespan(app: FastAPI):
         model=model,
         llm_provider=provider,
         llm_api_key=api_key,
-        llm_extra_headers=extra_headers
+        llm_extra_headers=extra_headers,
+        on_event=manager.broadcast
     )
     scheduler_task = asyncio.create_task(run_scheduler(session_manager, manager))
     print("✅ Gateway server started")
@@ -229,7 +232,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail="Session manager not initialized")
 
     try:
-        session_id = f"{request.platform}:{request.user_id}"
+        session_id = make_session_id(request.platform, request.user_id, request.agent_id)
 
         session_manager.save_message(session_id, "user", request.message)
 
@@ -238,6 +241,7 @@ async def chat(request: ChatRequest):
             "type": "user_message",
             "session_id": session_id,
             "platform": request.platform,
+            "agent_id": request.agent_id,
             "message": request.message,
             "timestamp": _now()
         })
@@ -246,7 +250,8 @@ async def chat(request: ChatRequest):
         response = await session_manager.send_message(
             platform=request.platform,
             user_id=request.user_id,
-            message=request.message
+            message=request.message,
+            agent_id=request.agent_id
         )
 
         # Get session stats
@@ -259,6 +264,7 @@ async def chat(request: ChatRequest):
             "type": "assistant_message",
             "session_id": session_id,
             "platform": request.platform,
+            "agent_id": request.agent_id,
             "message": response,
             "message_count": stats["message_count"] if stats else 0,
             "timestamp": _now()
@@ -286,6 +292,7 @@ async def list_sessions():
             session_id=s.session_id,
             platform=s.platform,
             user_id=s.user_id,
+            agent_id=s.agent_id,
             created_at=s.created_at.isoformat(),
             last_active=s.last_active.isoformat(),
             message_count=s.message_count
@@ -363,6 +370,174 @@ async def update_persona(update: PersonaUpdate):
     return {"message": "Persona updated"}
 
 
+# --- Team of agents: roster CRUD, templates, and live status/activity ---
+
+class AgentOut(BaseModel):
+    """A fully-resolved team member (persona text included)."""
+    id: str
+    name: str
+    description: str
+    template_id: Optional[str] = None
+    tools: Any
+    skills: Any
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    soul: str
+
+    @staticmethod
+    def from_definition(defn) -> "AgentOut":
+        return AgentOut(
+            id=defn.id, name=defn.name, description=defn.description,
+            template_id=defn.template_id, tools=defn.tools, skills=defn.skills,
+            model=defn.model, provider=defn.provider, soul=defn.soul,
+        )
+
+
+class CreateAgentRequest(BaseModel):
+    template_id: str
+    id: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tools: Optional[Union[List[str], Literal["*"]]] = None
+    skills: Optional[Union[List[str], Literal["*"]]] = None
+    soul: Optional[str] = None
+
+
+class UpdateAgentRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tools: Optional[Union[List[str], Literal["*"]]] = None
+    skills: Optional[Union[List[str], Literal["*"]]] = None
+    soul: Optional[str] = None
+
+
+def _require_session_manager() -> SessionManager:
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+    return session_manager
+
+
+@app.get("/agents", response_model=List[AgentOut], dependencies=[Depends(_require_gateway_token)])
+async def list_agents():
+    """List every configured team member (Kit first)."""
+    sm = _require_session_manager()
+    return [AgentOut.from_definition(a) for a in sm.agent_registry.list_agents()]
+
+
+@app.get("/agents/status", dependencies=[Depends(_require_gateway_token)])
+async def get_agents_status():
+    """Current busy/idle + current-task snapshot for every agent that has
+    run at least once - for initial page load, before any `agent_status`
+    WS events have arrived."""
+    sm = _require_session_manager()
+    return sm.get_agent_status()
+
+
+@app.get("/agents/activity", dependencies=[Depends(_require_gateway_token)])
+async def get_agents_activity(agent_id: Optional[str] = None, limit: int = 200):
+    """The cross-agent activity feed (tool calls, delegation, status
+    changes) - the "inspect all agent-to-agent communication" view."""
+    sm = _require_session_manager()
+    return sm.get_activity(agent_id=agent_id, limit=limit)
+
+
+@app.post("/agents", response_model=AgentOut, dependencies=[Depends(_require_gateway_token)])
+async def create_agent(request: CreateAgentRequest):
+    """Create a team member from a template, with optional overrides."""
+    sm = _require_session_manager()
+    try:
+        defn = sm.agent_registry.create_agent(
+            template_id=request.template_id,
+            id=request.id,
+            name=request.name,
+            description=request.description,
+            tool_overrides=request.tools,
+            skill_overrides=request.skills,
+            soul_overrides=request.soul,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return AgentOut.from_definition(defn)
+
+
+@app.get("/agents/{agent_id}", response_model=AgentOut, dependencies=[Depends(_require_gateway_token)])
+async def get_agent(agent_id: str):
+    sm = _require_session_manager()
+    defn = sm.agent_registry.resolve(agent_id)
+    if defn is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    return AgentOut.from_definition(defn)
+
+
+@app.put("/agents/{agent_id}", response_model=AgentOut, dependencies=[Depends(_require_gateway_token)])
+async def update_agent(agent_id: str, request: UpdateAgentRequest):
+    sm = _require_session_manager()
+    try:
+        defn = sm.agent_registry.update_agent(
+            agent_id,
+            name=request.name,
+            description=request.description,
+            tools=request.tools,
+            skills=request.skills,
+            soul=request.soul,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return AgentOut.from_definition(defn)
+
+
+@app.delete("/agents/{agent_id}", dependencies=[Depends(_require_gateway_token)])
+async def delete_agent(agent_id: str):
+    sm = _require_session_manager()
+    try:
+        existed = sm.agent_registry.delete_agent(agent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not existed:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    return {"message": f"Agent '{agent_id}' deleted"}
+
+
+@app.get("/agent-templates", dependencies=[Depends(_require_gateway_token)])
+async def list_agent_templates():
+    """Built-in templates (templates/agents/), overridden/extended by any
+    user templates of the same id (workspace/agent_templates/)."""
+    sm = _require_session_manager()
+    return sm.agent_registry.list_templates()
+
+
+@app.post("/agent-templates", dependencies=[Depends(_require_gateway_token)])
+async def save_agent_template(template: Dict[str, Any]):
+    """Save a user-defined template - creates a new one, or overrides a
+    built-in template of the same id."""
+    sm = _require_session_manager()
+    try:
+        return sm.agent_registry.save_template(template)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/tools", dependencies=[Depends(_require_gateway_token)])
+async def list_tools():
+    """Introspect the global tool registry - also what makes the Tools tab
+    (and the tool checkboxes when creating/editing an agent) dynamic."""
+    from tools.core import TOOLS
+    return [
+        {"name": t["function"]["name"], "description": t["function"].get("description", "")}
+        for t in TOOLS
+    ]
+
+
+@app.get("/skills", dependencies=[Depends(_require_gateway_token)])
+async def list_skills_endpoint():
+    """The shared skills library (same for every agent's SkillsManager,
+    since all agents share one workspace)."""
+    sm = _require_session_manager()
+    from runtime.skills import SkillsManager
+    skills = SkillsManager(str(sm.agent_registry.workspace_dir))
+    return list(skills.metadata.values())
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -414,8 +589,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif msg_type == "chat_message":
                     platform = message.get("platform", "web")
                     user_id = message.get("user_id", "anonymous")
+                    agent_id = message.get("agent_id", "kit")
                     user_msg = message.get("message", "")
-                    session_id = f"{platform}:{user_id}"
+                    session_id = make_session_id(platform, user_id, agent_id)
 
                     session_manager.save_message(session_id, "user", user_msg)
 
@@ -423,13 +599,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         "type": "user_message",
                         "session_id": session_id,
                         "platform": platform,
+                        "agent_id": agent_id,
                         "message": user_msg,
                         "timestamp": _now(),
                     })
 
                     try:
                         async for event in session_manager.send_message_stream(
-                            platform=platform, user_id=user_id, message=user_msg
+                            platform=platform, user_id=user_id, message=user_msg, agent_id=agent_id
                         ):
                             await websocket.send_json({
                                 **event,
@@ -445,6 +622,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                     "type": "assistant_message",
                                     "session_id": session_id,
                                     "platform": platform,
+                                    "agent_id": agent_id,
                                     "message": assistant_content,
                                     "message_count": stats["message_count"] if stats else 0,
                                     "timestamp": _now(),

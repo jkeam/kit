@@ -113,7 +113,19 @@ class EmbeddingsManager:
         content = file_path.read_text()
         chunks = self._chunk_text(content)
 
+        # Clear this file's previously-indexed chunks before re-adding.
+        # upsert() only touches the ids it's given, so if the file shrank
+        # (edited, or a daily log got cleaned up) the old chunk ids beyond
+        # the new count would otherwise linger in the collection forever,
+        # still searchable via memory_search despite no longer existing on
+        # disk.
+        try:
+            self.collection.delete(where={"source": file_key})
+        except Exception:
+            pass
+
         if not chunks:
+            self.indexed_files[file_key] = current_hash
             return
 
         # Generate embeddings

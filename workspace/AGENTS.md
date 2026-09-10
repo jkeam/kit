@@ -10,6 +10,7 @@
 - Run shell commands
 - Execute scripts
 - System operations
+- Commands run with shell=False and reject `& | ; \` $ < >` - no piping, chaining, redirects, or substitution in a single exec_shell call. Run each step as its own exec_shell call instead. To test a script that reads from stdin, write a separate non-interactive script (or pass sample data as CLI args) rather than piping input into it.
 
 ## Memory Management
 - Store long-term knowledge (MEMORY.md)

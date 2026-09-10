@@ -7,7 +7,7 @@ This integrates with LlamaStack (soon OGX) which handles the ReAct loop.
 import asyncio
 import json
 from pathlib import Path
-from typing import Dict, Any, List, Optional, AsyncGenerator
+from typing import Dict, Any, List, Optional, Set, AsyncGenerator
 from llama_stack_client import AsyncLlamaStackClient
 from openai import AsyncOpenAI
 
@@ -17,6 +17,11 @@ from runtime.skills import SkillsManager
 from tools.core import TOOLS, execute_tool
 
 MAX_TOOL_ROUNDS = 10
+
+# How many hops an agent_delegate chain may take before it's refused. Guards
+# against a deliberately-configured delegation cycle (A -> B -> A) recursing
+# forever; normal delegation is 1-2 hops deep.
+MAX_DELEGATION_DEPTH = 3
 
 # Providers that speak plain OpenAI-compatible chat completions
 # (as opposed to "llamastack", which uses the LlamaStack client/server).
@@ -36,6 +41,13 @@ class PersonalAssistant:
         api_key: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
         embeddings: Optional[EmbeddingsManager] = None,
+        allowed_tools: Optional[Set[str]] = None,
+        allowed_skills: Optional[Set[str]] = None,
+        soul_override: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        session_manager: Optional[Any] = None,
+        platform: Optional[str] = None,
+        user_id: Optional[str] = None,
     ):
         """
         Initialize the assistant.
@@ -56,6 +68,25 @@ class PersonalAssistant:
                 multiple PersonalAssistant instances (e.g. one per session).
                 Avoids loading a separate SentenceTransformer model per
                 session. If omitted, one is created per `use_embeddings`.
+            allowed_tools: Restrict this agent to a subset of the global
+                tool registry (by name). None (default) means unrestricted,
+                which preserves Kit's original full-access behavior.
+            allowed_skills: Restrict which named skills this agent may
+                execute/list/manage. None (default) means unrestricted.
+            soul_override: Persona text to use instead of loading
+                workspace/SOUL.md - lets a non-Kit team member have its own
+                persona while still sharing this workspace's memory/skills.
+            agent_id: This agent's own id in the team roster (e.g. "kit"),
+                used to tag messages this agent places into another agent's
+                thread via delegation.
+            session_manager: A SessionManager-like object (duck-typed to
+                avoid a circular import with gateway/session_manager.py)
+                used to dispatch `agent_delegate` tool calls. Only agents
+                whose allowed_tools include "agent_delegate" can actually
+                use it - see `_delegate`.
+            platform: The platform this agent's own session belongs to
+                (needed so delegation targets the same user's thread).
+            user_id: The user id this agent's own session belongs to.
         """
         if provider in OPENAI_COMPATIBLE_PROVIDERS:
             # Any OpenAI-compatible endpoint (Ollama's /v1 endpoint, OpenCode
@@ -88,9 +119,30 @@ class PersonalAssistant:
         # Initialize skills manager
         self.skills = SkillsManager(workspace_dir)
 
-        # Load system prompts
-        self.soul = self._load_file("SOUL.md")
+        # Load system prompts. soul_override lets a non-Kit team member use
+        # its own persona instead of this workspace's shared SOUL.md.
+        self.soul = soul_override if soul_override is not None else self._load_file("SOUL.md")
         self.agents_md = self._load_file("AGENTS.md")
+
+        # Per-agent tool/skill scoping. None means unrestricted (Kit's
+        # original behavior). Computed once since the allowlist is static
+        # for the lifetime of this instance.
+        self.allowed_tools = allowed_tools
+        self.allowed_skills = allowed_skills
+        self._filtered_tools = (
+            TOOLS if allowed_tools is None
+            else [t for t in TOOLS if t["function"]["name"] in allowed_tools]
+        )
+
+        # Delegation context - who this agent is, and how to reach the rest
+        # of the team. `_current_delegation_depth` is set per chat_stream()
+        # call (not per instance) since one PersonalAssistant is reused
+        # across many unrelated turns.
+        self.agent_id = agent_id
+        self.session_manager = session_manager
+        self.platform = platform
+        self.user_id = user_id
+        self._current_delegation_depth = 0
 
     def _load_file(self, filename: str) -> str:
         """Load a file from workspace directory."""
@@ -99,8 +151,34 @@ class PersonalAssistant:
             return file_path.read_text()
         return ""
 
+    def _team_roster_section(self) -> str:
+        """List of teammates this agent can hand tasks to via agent_delegate,
+        resolved fresh from the registry every time the system prompt is
+        rebuilt (i.e. every turn) so a newly-created agent becomes visible
+        immediately - no restart, no stale snapshot taken at construction
+        time. Empty for agents that don't have agent_delegate at all."""
+        if not self.session_manager:
+            return ""
+        if self.allowed_tools is not None and "agent_delegate" not in self.allowed_tools:
+            return ""
+        try:
+            roster = self.session_manager.agent_registry.list_agents()
+        except Exception:
+            return ""
+        teammates = [a for a in roster if a.id != (self.agent_id or "kit")]
+        if not teammates:
+            return ""
+        lines = [
+            "# YOUR TEAM\n",
+            "You can hand a task to any of these agents with the agent_delegate tool "
+            "(agent_delegate(agent_id, task)) - only that agent acts on it:\n",
+        ]
+        for a in teammates:
+            lines.append(f"- **{a.id}** ({a.name}): {a.description}")
+        return "\n".join(lines)
+
     def _build_system_prompt(self) -> str:
-        """Build the system prompt from SOUL.md, AGENTS.md, and memory."""
+        """Build the system prompt from SOUL.md, AGENTS.md, team roster, and memory."""
         parts = []
 
         if self.soul:
@@ -109,6 +187,11 @@ class PersonalAssistant:
         if self.agents_md:
             parts.append("\n\n---\n\n")
             parts.append(self.agents_md)
+
+        roster_section = self._team_roster_section()
+        if roster_section:
+            parts.append("\n\n---\n\n")
+            parts.append(roster_section)
 
         # Add memory context
         memory_context = self.memory.load_context()
@@ -121,6 +204,16 @@ class PersonalAssistant:
 
     def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
         """Execute a tool call and return the result as a string."""
+        if self.allowed_tools is not None and tool_name not in self.allowed_tools:
+            return f"Error: tool '{tool_name}' is not available to this agent"
+
+        if (
+            self.allowed_skills is not None
+            and tool_name in ("skill_execute", "skill_improve", "skill_delete", "skill_info")
+            and tool_args.get("name") not in self.allowed_skills
+        ):
+            return f"Error: skill '{tool_args.get('name')}' is not available to this agent"
+
         if tool_name == "memory_search":
             if not self.embeddings:
                 return "Error: memory_search requires embeddings to be initialized"
@@ -147,7 +240,7 @@ class PersonalAssistant:
                 tags=tags
             )
         if tool_name == "skill_list":
-            return self.skills.list_skills(tool_args.get("tag"))
+            return self.skills.list_skills(tool_args.get("tag"), names=self.allowed_skills)
         if tool_name == "skill_execute":
             args_str = tool_args.get("args")
             kwargs = json.loads(args_str) if args_str else {}
@@ -166,19 +259,62 @@ class PersonalAssistant:
 
         return execute_tool(tool_name, tool_args)
 
-    async def chat(self, user_message: str) -> str:
+    async def _delegate(self, tool_args: Dict[str, Any]) -> str:
+        """Hand a task to another agent on the team and return its reply.
+
+        Runs through the injected `session_manager` so the delegated task
+        lands in the *target agent's own persistent thread for this same
+        user* (not a throwaway session) - the same thread the user would
+        see if they switched their chat target to that agent.
+        """
+        if self.allowed_tools is not None and "agent_delegate" not in self.allowed_tools:
+            return "Error: tool 'agent_delegate' is not available to this agent"
+        if not self.session_manager or self.platform is None or self.user_id is None:
+            return "Error: delegation is not available in this context"
+        if self._current_delegation_depth >= MAX_DELEGATION_DEPTH:
+            return "Error: delegation depth limit reached - avoid configuring delegation cycles"
+
+        target_agent_id = tool_args.get("agent_id")
+        task = tool_args.get("task", "")
+        if not target_agent_id:
+            return "Error: agent_delegate requires 'agent_id'"
+
+        try:
+            return await self.session_manager.delegate(
+                platform=self.platform,
+                user_id=self.user_id,
+                from_agent_id=self.agent_id or "kit",
+                to_agent_id=target_agent_id,
+                task=task,
+                depth=self._current_delegation_depth + 1,
+            )
+        except Exception as e:
+            return f"Error delegating to '{target_agent_id}': {e}"
+
+    async def _execute_tool_async(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
+        """Dispatch a tool call, awaiting `agent_delegate` directly (it runs
+        a nested async chat_stream) and running everything else in a thread
+        (existing behavior - shell/browser/skills calls are sync/blocking).
+        """
+        if tool_name == "agent_delegate":
+            return await self._delegate(tool_args)
+        return await asyncio.to_thread(self._execute_tool, tool_name, tool_args)
+
+    async def chat(self, user_message: str, _delegation_depth: int = 0) -> str:
         """
         Send a message and get a complete response (non-streaming).
         """
         full_response = ""
-        async for event in self.chat_stream(user_message):
+        async for event in self.chat_stream(user_message, _delegation_depth=_delegation_depth):
             if event["type"] == "stream_end":
                 full_response = event["content"]
             elif event["type"] == "stream_error":
                 full_response = f"Error: {event['error']}"
         return full_response
 
-    async def chat_stream(self, user_message: str) -> AsyncGenerator[Dict[str, Any], None]:
+    async def chat_stream(
+        self, user_message: str, _delegation_depth: int = 0
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Send a message and yield streaming events.
 
@@ -190,6 +326,7 @@ class PersonalAssistant:
             stream_end    - done {"content": str}  (full assembled text)
             stream_error  - error {"error": str}
         """
+        self._current_delegation_depth = _delegation_depth
         try:
             system_prompt = self._build_system_prompt()
             messages = [
@@ -205,7 +342,7 @@ class PersonalAssistant:
                 stream = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    tools=TOOLS,
+                    tools=self._filtered_tools,
                     stream=True,
                 )
 
@@ -271,7 +408,9 @@ class PersonalAssistant:
                             # Tool execution (shell, browser, skills) is
                             # synchronous and can block for seconds; run it
                             # in a thread so it doesn't stall the event loop.
-                            result = str(await asyncio.to_thread(self._execute_tool, tool_name, tool_args))
+                            # agent_delegate is the one exception - it runs a
+                            # nested async chat_stream and is awaited directly.
+                            result = str(await self._execute_tool_async(tool_name, tool_args))
                         except Exception as e:
                             result = f"Error: {e}"
 
@@ -288,13 +427,22 @@ class PersonalAssistant:
                 break
 
             full_response = "".join(all_content_parts)
-            self.memory.log_interaction(user_message, full_response)
+            self.memory.log_interaction(user_message, full_response, speaker=self._log_speaker())
             yield {"type": "stream_end", "content": full_response}
 
         except Exception as e:
             error_msg = str(e)
-            self.memory.log_interaction(user_message, f"ERROR: {error_msg}")
+            self.memory.log_interaction(user_message, f"ERROR: {error_msg}", speaker=self._log_speaker())
             yield {"type": "stream_error", "error": error_msg}
+
+    def _log_speaker(self) -> str:
+        """Label used in the shared daily log for this agent's replies -
+        "Assistant" for Kit (unchanged format), or "<name> (agent)" for a
+        team member, so every agent's shared memory context makes clear who
+        did what."""
+        if not self.agent_id or self.agent_id == "kit":
+            return "Assistant"
+        return f"{self.agent_id} (agent)"
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """Get statistics about memory usage."""

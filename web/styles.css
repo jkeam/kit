@@ -475,6 +475,164 @@
     }
 }
 
+/* Chat target selector (Kit or a specific agent) */
+.pf-v5-c-card__header-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.agent-select {
+    width: auto;
+    font-weight: 600;
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+
+.agent-status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--pf-v5-global--Color--300);
+}
+
+.agent-status-dot.busy {
+    background: var(--pf-v5-global--warning-color--100);
+    box-shadow: 0 0 0 3px rgba(240, 171, 0, 0.25);
+}
+
+.agent-status-dot.idle {
+    background: var(--pf-v5-global--success-color--100);
+}
+
+/* Agents tab */
+.agent-card {
+    padding: 16px;
+    margin-bottom: 12px;
+    background: var(--pf-v5-global--BackgroundColor--200);
+    border-radius: 12px;
+    border-left: 4px solid var(--pf-v5-global--primary-color--100);
+}
+
+.agent-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.agent-card-header h4 {
+    font-size: 16px;
+    margin: 0;
+}
+
+.agent-card-task {
+    font-size: 12px;
+    color: var(--pf-v5-global--Color--200);
+    font-style: italic;
+    margin: 4px 0;
+}
+
+.agent-card-meta {
+    font-size: 13px;
+    color: var(--pf-v5-global--Color--200);
+    margin: 4px 0;
+}
+
+.agent-card-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 8px;
+}
+
+.agent-new-card {
+    margin-top: 16px;
+}
+
+.agent-edit-panel {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--pf-v5-global--BorderColor--200);
+}
+
+.agent-edit-panel .pf-v5-c-form__group {
+    margin-bottom: 10px;
+}
+
+.agent-edit-panel textarea {
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.agent-form-status {
+    margin-left: 10px;
+    font-size: 13px;
+    align-self: center;
+}
+
+.agent-form-status.error {
+    color: var(--pf-v5-global--danger-color--100);
+}
+
+.agent-form-status.success {
+    color: var(--pf-v5-global--success-color--100);
+}
+
+.tab-hint {
+    font-size: 13px;
+    color: var(--pf-v5-global--Color--200);
+    margin-bottom: 0.75rem;
+}
+
+/* Team Activity feed */
+.activity-item {
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    background: var(--pf-v5-global--BackgroundColor--200);
+    border-radius: 10px;
+    border-left: 3px solid var(--pf-v5-global--palette--gold-400);
+    font-size: 13px;
+}
+
+.activity-item.status-event {
+    border-left-color: var(--pf-v5-global--primary-color--100);
+}
+
+.activity-item-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-weight: 600;
+}
+
+.activity-item-time {
+    font-weight: 400;
+    color: var(--pf-v5-global--Color--200);
+    font-size: 11px;
+}
+
+.activity-item-detail {
+    margin-top: 4px;
+    color: var(--pf-v5-global--Color--200);
+    white-space: pre-wrap;
+    max-height: 100px;
+    overflow-y: auto;
+}
+
+/* Delegated messages - placed by another agent rather than typed by the
+   human, so they're visually distinct in a chat thread. */
+.message.delegated {
+    border: 1px dashed var(--pf-v5-global--primary-color--100);
+}
+
+.message-sender-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--pf-v5-global--primary-color--100);
+    margin-bottom: 4px;
+}
+
 @media (max-width: 480px) {
     .brand-wordmark {
         font-size: 1.1rem;

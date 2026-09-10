@@ -59,7 +59,10 @@
                         <div class="pf-v5-c-card">
                             <div class="pf-v5-c-card__header">
                                 <div class="pf-v5-c-card__header-main">
-                                    <h2 class="pf-v5-c-card__title">Kit</h2>
+                                    <div class="agent-status-dot" id="chat-target-status-dot" title="Idle"></div>
+                                    <select id="chat-agent-select" class="pf-v5-c-form-control agent-select" title="Who you're talking to">
+                                        <option value="kit">Kit (Manager)</option>
+                                    </select>
                                 </div>
                                 <div class="pf-v5-c-card__actions">
                                     <span class="pf-v5-c-label pf-m-blue">
@@ -108,6 +111,16 @@
                                             </button>
                                         </li>
                                         <li class="pf-v5-c-tabs__item">
+                                            <button class="pf-v5-c-tabs__link" data-tab="agents">
+                                                <span class="pf-v5-c-tabs__item-text">Agents</span>
+                                            </button>
+                                        </li>
+                                        <li class="pf-v5-c-tabs__item">
+                                            <button class="pf-v5-c-tabs__link" data-tab="activity">
+                                                <span class="pf-v5-c-tabs__item-text">Team Activity</span>
+                                            </button>
+                                        </li>
+                                        <li class="pf-v5-c-tabs__item">
                                             <button class="pf-v5-c-tabs__link" data-tab="memory">
                                                 <span class="pf-v5-c-tabs__item-text">Memory</span>
                                             </button>
@@ -141,6 +154,40 @@
                                     <div id="sessions-list"></div>
                                 </div>
 
+                                <!-- Agents Tab -->
+                                <div id="agents-tab" class="tab-content">
+                                    <div id="agents-list"></div>
+                                    <div class="pf-v5-c-card agent-new-card">
+                                        <div class="pf-v5-c-card__title">Add a team member</div>
+                                        <div class="pf-v5-c-card__body">
+                                            <div class="pf-v5-c-form">
+                                                <div class="pf-v5-c-form__group">
+                                                    <label class="pf-v5-c-form__label" for="new-agent-template">Template</label>
+                                                    <select id="new-agent-template" class="pf-v5-c-form-control"></select>
+                                                </div>
+                                                <div class="pf-v5-c-form__group">
+                                                    <label class="pf-v5-c-form__label" for="new-agent-id">Id</label>
+                                                    <input id="new-agent-id" class="pf-v5-c-form-control" type="text" placeholder="e.g. tester-1">
+                                                </div>
+                                                <div class="pf-v5-c-form__group">
+                                                    <label class="pf-v5-c-form__label" for="new-agent-name">Display name (optional)</label>
+                                                    <input id="new-agent-name" class="pf-v5-c-form-control" type="text" placeholder="e.g. Tester">
+                                                </div>
+                                                <button id="create-agent-button" class="pf-v5-c-button pf-m-primary">Create agent</button>
+                                                <span id="create-agent-status" class="agent-form-status"></span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Team Activity Tab -->
+                                <div id="activity-tab" class="tab-content">
+                                    <button id="refresh-activity" class="pf-v5-c-button pf-m-secondary" style="margin-bottom: 1rem;">
+                                        Refresh
+                                    </button>
+                                    <div id="activity-list"></div>
+                                </div>
+
                                 <!-- Memory Tab -->
                                 <div id="memory-tab" class="tab-content">
                                     <div class="pf-v5-c-input-group" style="margin-bottom: 1rem;">
@@ -159,64 +206,8 @@
 
                                 <!-- Tools Tab -->
                                 <div id="tools-tab" class="tab-content">
-                                    <div class="pf-v5-c-description-list">
-                                        <div class="pf-v5-c-description-list__group">
-                                            <dt class="pf-v5-c-description-list__term">
-                                                <span class="pf-v5-c-description-list__text">File Operations</span>
-                                            </dt>
-                                            <dd class="pf-v5-c-description-list__description">
-                                                <div class="pf-v5-c-description-list__text">read, write, list_files</div>
-                                            </dd>
-                                        </div>
-                                        <div class="pf-v5-c-description-list__group">
-                                            <dt class="pf-v5-c-description-list__term">
-                                                <span class="pf-v5-c-description-list__text">Memory</span>
-                                            </dt>
-                                            <dd class="pf-v5-c-description-list__description">
-                                                <div class="pf-v5-c-description-list__text">memory_write, memory_get, memory_search</div>
-                                            </dd>
-                                        </div>
-                                        <div class="pf-v5-c-description-list__group">
-                                            <dt class="pf-v5-c-description-list__term">
-                                                <span class="pf-v5-c-description-list__text">Web</span>
-                                            </dt>
-                                            <dd class="pf-v5-c-description-list__description">
-                                                <div class="pf-v5-c-description-list__text">web_search, web_fetch</div>
-                                            </dd>
-                                        </div>
-                                        <div class="pf-v5-c-description-list__group">
-                                            <dt class="pf-v5-c-description-list__term">
-                                                <span class="pf-v5-c-description-list__text">Browser</span>
-                                            </dt>
-                                            <dd class="pf-v5-c-description-list__description">
-                                                <div class="pf-v5-c-description-list__text">browser_screenshot, browser_navigate, browser_extract</div>
-                                            </dd>
-                                        </div>
-                                        <div class="pf-v5-c-description-list__group">
-                                            <dt class="pf-v5-c-description-list__term">
-                                                <span class="pf-v5-c-description-list__text">Scheduling</span>
-                                            </dt>
-                                            <dd class="pf-v5-c-description-list__description">
-                                                <div class="pf-v5-c-description-list__text">schedule_create, schedule_list, schedule_delete</div>
-                                            </dd>
-                                        </div>
-                                        <div class="pf-v5-c-description-list__group">
-                                            <dt class="pf-v5-c-description-list__term">
-                                                <span class="pf-v5-c-description-list__text">Skills</span>
-                                            </dt>
-                                            <dd class="pf-v5-c-description-list__description">
-                                                <div class="pf-v5-c-description-list__text">skill_create, skill_list, skill_execute, skill_improve, skill_delete, skill_info</div>
-                                            </dd>
-                                        </div>
-                                        <div class="pf-v5-c-description-list__group">
-                                            <dt class="pf-v5-c-description-list__term">
-                                                <span class="pf-v5-c-description-list__text">System</span>
-                                            </dt>
-                                            <dd class="pf-v5-c-description-list__description">
-                                                <div class="pf-v5-c-description-list__text">exec_shell</div>
-                                            </dd>
-                                        </div>
-                                    </div>
+                                    <p class="tab-hint">Kit's full tool registry. Each agent is scoped to a subset of these (see the Agents tab).</p>
+                                    <div id="tools-list" class="pf-v5-c-description-list"></div>
                                 </div>
 
                                 <!-- Schedules Tab -->

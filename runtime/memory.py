@@ -51,13 +51,17 @@ class MemoryManager:
 
         return "\n".join(context_parts) if context_parts else ""
 
-    def log_interaction(self, user_message: str, assistant_response: str):
+    def log_interaction(self, user_message: str, assistant_response: str, speaker: str = "Assistant"):
         """
         Log an interaction to today's daily log.
 
         Args:
             user_message: The user's message
             assistant_response: The assistant's response
+            speaker: Who produced the response - "Assistant" for Kit
+                (default, preserves the original log format), or a team
+                member's label (e.g. "Tester (agent)") so every agent's
+                shared daily log makes clear who did what.
         """
         log_path = self._get_daily_log_path(datetime.now())
 
@@ -68,7 +72,7 @@ class MemoryManager:
 
 **User**: {user_message}
 
-**Assistant**: {assistant_response}
+**{speaker}**: {assistant_response}
 
 ---
 """

@@ -155,12 +155,14 @@ Version: 1
         except Exception as e:
             return f"Error creating skill: {e}"
 
-    def list_skills(self, tag: Optional[str] = None) -> str:
+    def list_skills(self, tag: Optional[str] = None, names: Optional[set] = None) -> str:
         """
         List all available skills.
 
         Args:
             tag: Optional tag filter
+            names: Optional set of skill names to restrict the listing to
+                (used to scope a team member to only its allowlisted skills)
 
         Returns:
             Formatted list of skills
@@ -169,6 +171,9 @@ Version: 1
             return "No skills created yet."
 
         skills = self.metadata.values()
+
+        if names is not None:
+            skills = [s for s in skills if s["name"] in names]
 
         # Filter by tag if provided
         if tag:
