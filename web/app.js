@@ -120,6 +120,7 @@ let agentStatuses = {};
 // the details panel.
 let agentsCache = [];
 let agentsById = {};
+let templatesById = {};
 
 // Details panel: 'member' shows a team member's info, 'edit' shows the
 // edit-in-place form for a non-Kit agent, 'new' shows the add-teammate form.
@@ -220,7 +221,11 @@ function statusTextFor(agentId) {
 }
 
 function roleLabelFor(agentId) {
-    return agentId === KIT_AGENT_ID ? 'Manager' : '';
+    if (agentId === KIT_AGENT_ID) return 'Manager';
+    const agent = agentsById[agentId];
+    if (!agent || !agent.template_id) return '';
+    const tpl = templatesById[agent.template_id];
+    return tpl ? tpl.name : '';
 }
 
 // Info/details panel visibility persists per-browser via localStorage.
@@ -681,6 +686,17 @@ async function loadAgents() {
         agentsCache = agents;
         agentsById = {};
         agents.forEach(a => { agentsById[a.id] = a; });
+
+        try {
+            const tplRes = await apiFetch(`${API_BASE}/agent-templates`);
+            if (tplRes.ok) {
+                const templates = await tplRes.json();
+                templatesById = {};
+                templates.forEach(t => { templatesById[t.id] = t; });
+            }
+        } catch (e) {
+            // templates are optional for role display
+        }
         if (statusRes.ok) {
             agentStatuses = await statusRes.json();
         }
