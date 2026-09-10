@@ -29,6 +29,7 @@ import os
 from env_config import env_int
 from gateway.session_manager import SessionManager, make_session_id
 from gateway.scheduler import run_scheduler
+from runtime.memory import MemoryManager
 
 
 def _require_gateway_token(authorization: Optional[str] = Header(default=None)) -> None:
@@ -75,6 +76,13 @@ class ChatRequest(BaseModel):
     message: str
     agent_id: str = "kit"
     metadata: Optional[Dict[str, Any]] = None
+
+
+class BroadcastRequest(BaseModel):
+    """Request format for broadcast endpoint."""
+    platform: str
+    user_id: str
+    message: str
 
 
 class ChatResponse(BaseModel):
@@ -278,6 +286,33 @@ async def chat(request: ChatRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+
+
+def _broadcast_session_id(platform: str, user_id: str) -> str:
+    return f"broadcast:{platform}:{user_id}"
+
+
+@app.post("/broadcast", dependencies=[Depends(_require_gateway_token)])
+async def broadcast_message(request: BroadcastRequest):
+    """Post a broadcast message visible to all agents."""
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+
+    mem = MemoryManager(str(session_manager.agent_registry.workspace_dir))
+    mem.save_broadcast(request.message)
+
+    session_id = _broadcast_session_id(request.platform, request.user_id)
+    session_manager.save_message(session_id, "user", request.message)
+
+    await manager.broadcast({
+        "type": "user_message",
+        "session_id": session_id,
+        "platform": request.platform,
+        "message": request.message,
+        "timestamp": _now(),
+    })
+
+    return {"status": "ok", "session_id": session_id}
 
 
 @app.get("/sessions", response_model=List[SessionStats], dependencies=[Depends(_require_gateway_token)])
@@ -635,6 +670,24 @@ async def websocket_endpoint(websocket: WebSocket):
                             "error": str(e),
                             "timestamp": _now(),
                         })
+
+                elif msg_type == "broadcast":
+                    platform = message.get("platform", "web")
+                    user_id = message.get("user_id", "anonymous")
+                    user_msg = message.get("message", "")
+                    session_id = _broadcast_session_id(platform, user_id)
+
+                    mem = MemoryManager(str(session_manager.agent_registry.workspace_dir))
+                    mem.save_broadcast(user_msg)
+                    session_manager.save_message(session_id, "user", user_msg)
+
+                    await manager.broadcast({
+                        "type": "user_message",
+                        "session_id": session_id,
+                        "platform": platform,
+                        "message": user_msg,
+                        "timestamp": _now(),
+                    })
 
             except json.JSONDecodeError:
                 await websocket.send_json({

@@ -16,9 +16,15 @@ const AVATAR_PALETTE = ['#ca6c0f', '#37a3a3', '#5e40be', '#63993d', '#a60000', '
 // session id, any other agent gets its own {platform}:{user_id}:{agent_id}
 // thread, so switching this switches to a separately-remembered conversation.
 let currentAgentId = KIT_AGENT_ID;
+let currentMode = 'dm'; // 'dm' | 'broadcast'
 
 function currentSessionId(agentId = currentAgentId) {
+    if (currentMode === 'broadcast') return `broadcast:${PLATFORM}:${USER_ID}`;
     return agentId === KIT_AGENT_ID ? `${PLATFORM}:${USER_ID}` : `${PLATFORM}:${USER_ID}:${agentId}`;
+}
+
+function broadcastSessionId() {
+    return `broadcast:${PLATFORM}:${USER_ID}`;
 }
 
 let messageCount = 0;
@@ -346,6 +352,33 @@ async function sendMessage() {
     chatInput.value = '';
     chatInput.style.height = 'auto';
 
+    if (currentMode === 'broadcast') {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'broadcast',
+                platform: PLATFORM,
+                user_id: USER_ID,
+                message: message,
+            }));
+        } else {
+            try {
+                await apiFetch(`${API_BASE}/broadcast`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ platform: PLATFORM, user_id: USER_ID, message: message }),
+                });
+            } catch (error) {
+                addMessage(`Error: ${error.message}`, 'system');
+            }
+        }
+        messageCount++;
+        messageCountSpan.textContent = `${messageCount} messages`;
+        chatInput.disabled = false;
+        sendButton.disabled = false;
+        chatInput.focus();
+        return;
+    }
+
     if (ws && ws.readyState === WebSocket.OPEN) {
         addThinkingIndicator();
         ws.send(JSON.stringify({
@@ -431,6 +464,7 @@ function updateChatHeaderForCurrentAgent() {
 // Switch who the chat panel is talking to (Kit or a specific agent) - moves
 // to that agent's own persistent thread rather than continuing this one.
 async function selectMember(agentId) {
+    currentMode = 'dm';
     currentAgentId = agentId;
     updateChatHeaderForCurrentAgent();
     refreshMemberListVisualState();
@@ -441,6 +475,24 @@ async function selectMember(agentId) {
     if (!detailsPanelEl.hidden && detailsMode !== 'new') {
         renderMemberDetails(agentId);
     }
+}
+
+async function selectBroadcastChannel() {
+    currentMode = 'broadcast';
+    refreshMemberListVisualState();
+    messageCount = 0;
+    messageCountSpan.textContent = '0 messages';
+    closeMobileSidebar();
+
+    chatAvatar.textContent = '#';
+    chatAvatar.style.background = '#5e40be';
+    chatHeaderName.textContent = 'team';
+    chatHeaderName.title = broadcastSessionId();
+    chatInput.placeholder = 'Broadcast to team…';
+    chatTargetStatusDot.classList.remove('idle', 'busy');
+    chatHeaderStatusText.textContent = 'Channel';
+
+    await loadChatHistory();
 }
 
 function finishStreaming() {
@@ -493,15 +545,29 @@ function renderMemberList() {
     const others = agentsCache.filter(a => a.id !== KIT_AGENT_ID).sort((a, b) => a.name.localeCompare(b.name));
 
     let html = '';
+
+    html += '<div class="member-section-label">Channels</div>';
+    html += `
+        <button class="member-row channel-row" data-channel="broadcast">
+            <div class="avatar channel-avatar">#</div>
+            <div class="member-row-text">
+                <div class="member-row-name">team</div>
+                <div class="member-row-task"></div>
+            </div>
+        </button>
+    `;
+
+    html += '<div class="member-section-label">Direct Messages</div>';
     if (kit) html += memberRowHtml(kit);
-    if (others.length) {
-        html += '<div class="member-section-label">Team</div>';
-        html += others.map(memberRowHtml).join('');
-    }
+    html += others.map(memberRowHtml).join('');
+
     memberList.innerHTML = html;
 
-    memberList.querySelectorAll('.member-row').forEach(row => {
+    memberList.querySelectorAll('.member-row:not(.channel-row)').forEach(row => {
         row.addEventListener('click', () => selectMember(row.dataset.agentId));
+    });
+    memberList.querySelectorAll('.channel-row').forEach(row => {
+        row.addEventListener('click', () => selectBroadcastChannel());
     });
 
     refreshMemberListVisualState();
@@ -509,8 +575,12 @@ function renderMemberList() {
 
 function refreshMemberListVisualState() {
     memberList.querySelectorAll('.member-row').forEach(row => {
+        if (row.classList.contains('channel-row')) {
+            row.classList.toggle('active', currentMode === 'broadcast');
+            return;
+        }
         const id = row.dataset.agentId;
-        row.classList.toggle('active', id === currentAgentId);
+        row.classList.toggle('active', currentMode === 'dm' && id === currentAgentId);
         const dot = row.querySelector('[data-status-dot]');
         if (dot) {
             dot.classList.remove('idle', 'busy');

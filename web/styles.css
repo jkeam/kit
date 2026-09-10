@@ -233,6 +233,16 @@ button, input, textarea {
     flex-shrink: 0;
 }
 
+.channel-avatar {
+    background: #5e40be !important;
+    font-weight: 800;
+    font-size: 14px !important;
+}
+
+.channel-row .member-row-name {
+    font-weight: 500;
+}
+
 .member-row-text {
     flex: 1;
     min-width: 0;

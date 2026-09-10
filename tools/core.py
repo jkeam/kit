@@ -188,23 +188,22 @@ def exec_shell(command: str) -> str:
         return f"Error executing command: {e}"
 
 
-def memory_write(content: str) -> str:
+def memory_write(content: str, agent_id: str = "kit") -> str:
     """
-    Append content to MEMORY.md (long-term memory).
+    Append content to this agent's MEMORY.md (long-term memory).
 
     Args:
         content: Content to add to memory
+        agent_id: The agent whose memory to write to
 
     Returns:
         Success or error message
     """
-    memory_path = Path("workspace/MEMORY.md")
+    memory_path = Path(f"workspace/memory/{agent_id}/MEMORY.md")
 
     try:
-        # Ensure workspace directory exists
         memory_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Append to memory file
         with memory_path.open("a") as f:
             f.write(f"\n\n## Memory Entry - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
             f.write(content)
@@ -215,12 +214,13 @@ def memory_write(content: str) -> str:
         return f"Error writing to memory: {e}"
 
 
-def memory_get(date: str = None) -> str:
+def memory_get(date: str = None, agent_id: str = "kit") -> str:
     """
-    Get daily log for a specific date.
+    Get this agent's daily log for a specific date.
 
     Args:
         date: Date in YYYY-MM-DD format (default: today)
+        agent_id: The agent whose log to read
 
     Returns:
         Daily log content or error message
@@ -230,7 +230,7 @@ def memory_get(date: str = None) -> str:
     elif not DATE_RE.match(date):
         return f"Error: invalid date '{date}', expected YYYY-MM-DD format"
 
-    log_path = Path(f"workspace/memory/{date}.md")
+    log_path = Path(f"workspace/memory/{agent_id}/{date}.md")
 
     if not log_path.exists():
         return f"No memory log found for {date}"

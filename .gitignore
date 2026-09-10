@@ -37,8 +37,8 @@ Thumbs.db
 # Phase documentation
 PHASE*.md
 
-# Daily interaction logs (auto-generated, per-user)
-workspace/memory/*.md
+# Per-agent daily logs, long-term memory, and broadcasts (auto-generated)
+workspace/memory/
 
 # Session history (user conversations)
 workspace/sessions/
