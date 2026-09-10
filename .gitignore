@@ -37,7 +37,7 @@ Thumbs.db
 # Phase documentation
 PHASE*.md
 
-# Workspace memory (keep committed for persistence)
+# Daily interaction logs (auto-generated, per-user)
 workspace/memory/*.md
 
 # Session history (user conversations)
@@ -45,6 +45,12 @@ workspace/sessions/
 
 # Persisted vector embeddings (regenerated via embeddings.index_workspace())
 workspace/chroma/
+
+# Personal runtime state (per-user; see *.example templates for onboarding)
+workspace/MEMORY.md
+workspace/USER.md
+workspace/schedules/schedules.json
+workspace/skills/skills_metadata.json
 
 # Temporary files
 *.tmp
