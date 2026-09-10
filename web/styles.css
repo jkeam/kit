@@ -948,6 +948,11 @@ textarea.form-control {
     flex-direction: column;
 }
 
+.template-links {
+    display: flex;
+    gap: 12px;
+}
+
 .template-create-link {
     display: inline-flex;
     align-items: center;

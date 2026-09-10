@@ -1067,7 +1067,10 @@ function renderAddTeammateForm() {
         <div class="form-group">
             <label class="form-label">Template</label>
             <select class="form-control" id="new-agent-template"></select>
-            <button class="template-create-link" id="create-template-link"><i class="fas fa-plus"></i> New template</button>
+            <div class="template-links">
+                <button class="template-create-link" id="edit-template-link"><i class="fas fa-pen"></i> Edit</button>
+                <button class="template-create-link" id="create-template-link"><i class="fas fa-plus"></i> New</button>
+            </div>
         </div>
         <div class="form-group">
             <label class="form-label">Id <span style="font-weight:normal;color:var(--pf-v5-global--Color--200)">(cannot be changed later)</span></label>
@@ -1086,6 +1089,10 @@ function renderAddTeammateForm() {
     document.getElementById('details-cancel-new').addEventListener('click', () => renderMemberDetails(currentAgentId));
     document.getElementById('create-agent-button').addEventListener('click', createAgent);
     document.getElementById('create-template-link').addEventListener('click', renderCreateTemplateForm);
+    document.getElementById('edit-template-link').addEventListener('click', () => {
+        const sel = document.getElementById('new-agent-template');
+        if (sel && sel.value) renderEditTemplateForm(sel.value);
+    });
     loadAgentTemplatesForNewAgentForm(document.getElementById('new-agent-template'));
 }
 
@@ -1215,6 +1222,106 @@ async function createTemplate() {
             throw new Error(err.detail || `HTTP ${response.status}`);
         }
         statusEl.textContent = 'Created';
+        statusEl.className = 'form-status success';
+        setTimeout(renderAddTeammateForm, 600);
+    } catch (error) {
+        statusEl.textContent = `Error: ${error.message}`;
+        statusEl.className = 'form-status error';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function renderEditTemplateForm(templateId) {
+    detailsMode = 'edit-template';
+    detailsTitle.textContent = 'Edit template';
+    detailsBody.innerHTML = '<div class="spinner"></div>';
+
+    let tpl;
+    try {
+        const response = await apiFetch(`${API_BASE}/agent-templates`);
+        if (!response.ok) throw new Error('Failed to load templates');
+        const templates = await response.json();
+        tpl = templates.find(t => t.id === templateId);
+        if (!tpl) throw new Error(`Template "${templateId}" not found`);
+    } catch (error) {
+        detailsBody.innerHTML = `<p class="form-status error">${escapeHtml(error.message)}</p>`;
+        return;
+    }
+
+    detailsBody.innerHTML = `
+        <button class="details-back-link" id="template-back-btn"><i class="fas fa-arrow-left"></i> Back to Add teammate</button>
+        <div class="form-group">
+            <label class="form-label">Id</label>
+            <input class="form-control" id="tpl-id" type="text" value="${escapeAttr(tpl.id)}" disabled>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Name</label>
+            <input class="form-control" id="tpl-name" type="text" value="${escapeAttr(tpl.name || '')}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Description</label>
+            <input class="form-control" id="tpl-description" type="text" value="${escapeAttr(tpl.description || '')}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Tools</label>
+            <div id="tpl-tools-cb" class="cb-group"></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Skills</label>
+            <div id="tpl-skills-cb" class="cb-group"></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Soul (persona)</label>
+            <textarea class="form-control" id="tpl-soul" rows="10">${escapeHtml(tpl.soul || '')}</textarea>
+        </div>
+        <div class="details-actions">
+            <button class="btn btn-primary" id="save-template-btn">Save template</button>
+            <button class="btn btn-secondary" id="template-cancel-btn">Cancel</button>
+            <span class="form-status" id="template-status"></span>
+        </div>
+    `;
+
+    document.getElementById('template-back-btn').addEventListener('click', renderAddTeammateForm);
+    document.getElementById('template-cancel-btn').addEventListener('click', renderAddTeammateForm);
+    document.getElementById('save-template-btn').addEventListener('click', () => saveTemplate(tpl.id));
+    renderCheckboxGroup('tpl-tools-cb', '/tools', tpl.tools || []);
+    renderCheckboxGroup('tpl-skills-cb', '/skills', tpl.skills || []);
+}
+
+async function saveTemplate(templateId) {
+    const statusEl = document.getElementById('template-status');
+    const btn = document.getElementById('save-template-btn');
+    const name = document.getElementById('tpl-name').value.trim();
+    if (!name) {
+        statusEl.textContent = 'Name is required';
+        statusEl.className = 'form-status error';
+        return;
+    }
+
+    const template = {
+        id: templateId,
+        name,
+        description: document.getElementById('tpl-description').value.trim(),
+        tools: readCheckboxGroup('tpl-tools-cb'),
+        skills: readCheckboxGroup('tpl-skills-cb'),
+        soul: document.getElementById('tpl-soul').value,
+    };
+
+    btn.disabled = true;
+    statusEl.textContent = 'Saving...';
+    statusEl.className = 'form-status';
+    try {
+        const response = await apiFetch(`${API_BASE}/agent-templates`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(template),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        statusEl.textContent = 'Saved';
         statusEl.className = 'form-status success';
         setTimeout(renderAddTeammateForm, 600);
     } catch (error) {
