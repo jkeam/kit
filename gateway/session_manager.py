@@ -203,7 +203,11 @@ class SessionManager:
 
     def cleanup_inactive_sessions(self, max_age_minutes: int = 60):
         """
-        Remove sessions inactive for more than max_age_minutes.
+        Remove sessions inactive for more than max_age_minutes, including
+        their persisted JSON history, and sweep any persisted session files
+        left on disk with no matching in-memory session (e.g. from a
+        session that aged out on a previous run, or one that was never
+        reloaded after a server restart).
 
         Args:
             max_age_minutes: Maximum age in minutes before cleanup
@@ -220,4 +224,28 @@ class SessionManager:
             del self.sessions[session_id]
             self.clear_messages(session_id)
 
-        return len(to_remove)
+        removed_count = len(to_remove)
+        removed_count += self._cleanup_orphaned_session_files(max_age_minutes, now)
+        return removed_count
+
+    def _cleanup_orphaned_session_files(self, max_age_minutes: float, now: datetime) -> int:
+        """Delete persisted session files with no active in-memory session,
+        once they're older than max_age_minutes (by file mtime)."""
+        if not SESSIONS_DIR.exists():
+            return 0
+
+        active_files = {self._session_file(sid) for sid in self.sessions}
+        removed = 0
+
+        for path in SESSIONS_DIR.glob("*.json"):
+            if path in active_files:
+                continue
+            age_minutes = (now - datetime.fromtimestamp(path.stat().st_mtime)).total_seconds() / 60
+            if age_minutes > max_age_minutes:
+                try:
+                    path.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+
+        return removed

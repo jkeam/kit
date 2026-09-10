@@ -7,10 +7,15 @@ from repeated patterns or explicit requests.
 
 import builtins
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import hashlib
+
+_RUNNER_SCRIPT = Path(__file__).parent / "_skill_scripts" / "run_skill.py"
+_SKILL_TIMEOUT_SECONDS = 60
 
 # Modules a skill is allowed to import. Keeps skills useful for the kind of
 # small data-transformation tasks they're meant for, without handing them
@@ -99,9 +104,10 @@ class SkillsManager:
             Success message or error
 
         Note:
-            Skills run with restricted builtins and a small stdlib import
-            allowlist (see _SAFE_MODULES / _SAFE_BUILTIN_NAMES) — no
-            filesystem, network, subprocess, or arbitrary imports.
+            Skills run in a dedicated subprocess with restricted builtins
+            and a small stdlib import allowlist (see _SAFE_MODULES /
+            _SAFE_BUILTIN_NAMES) — no filesystem, network, subprocess, or
+            arbitrary imports, and no access to the gateway process itself.
         """
         # Validate name
         if not name.replace("-", "").replace("_", "").isalnum():
@@ -194,6 +200,11 @@ Version: 1
         """
         Execute a skill.
 
+        Runs in a dedicated subprocess (see _skill_scripts/run_skill.py) so a
+        skill can't touch the gateway process's memory, can't wedge the
+        server if it hangs (the subprocess is killed on timeout), and a
+        crash in the skill can't take down the server.
+
         Args:
             name: Skill name
             **kwargs: Arguments to pass to skill
@@ -209,24 +220,27 @@ Version: 1
             return f"Error: Skill file for '{name}' not found"
 
         try:
-            # Read skill code
             code = skill_file.read_text()
+            payload = json.dumps({"code": code, "func_name": name, "kwargs": kwargs})
 
-            # Create a restricted execution namespace (no open/eval/exec,
-            # only a small allowlist of stdlib imports)
-            namespace = _build_restricted_namespace()
+            proc = subprocess.run(
+                [sys.executable, str(_RUNNER_SCRIPT)],
+                input=payload,
+                capture_output=True,
+                text=True,
+                timeout=_SKILL_TIMEOUT_SECONDS,
+            )
 
-            # Execute skill code to load function
-            exec(code, namespace)
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    proc.stderr.strip() or f"skill process exited with code {proc.returncode}"
+                )
 
-            # Find the main function (same name as skill or 'main')
-            func = namespace.get(name) or namespace.get('main')
+            output = json.loads(proc.stdout.strip() or "{}")
+            if "error" in output:
+                raise RuntimeError(output["error"])
 
-            if not func:
-                return f"Error: No function '{name}' or 'main' found in skill"
-
-            # Execute skill
-            result = func(**kwargs)
+            result = output.get("result", "")
 
             # Update metadata
             meta = self.metadata[name]
@@ -236,7 +250,17 @@ Version: 1
             meta['success_rate'] = meta['success_count'] / meta['usage_count']
             self._save_metadata()
 
-            return str(result)
+            return result
+
+        except subprocess.TimeoutExpired:
+            meta = self.metadata[name]
+            meta['usage_count'] += 1
+            meta.setdefault('success_count', 0)
+            meta['last_used'] = datetime.now().isoformat()
+            meta['success_rate'] = meta['success_count'] / meta['usage_count']
+            self._save_metadata()
+
+            return f"Error executing skill '{name}': timed out after {_SKILL_TIMEOUT_SECONDS}s"
 
         except Exception as e:
             # Track failure
