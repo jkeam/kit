@@ -52,6 +52,10 @@ workspace/USER.md
 workspace/schedules/schedules.json
 workspace/skills/skills_metadata.json
 
+# Instantiated team roster (per-user; built-in presets live in templates/agents/)
+workspace/agents/
+workspace/agent_templates/
+
 # Temporary files
 *.tmp
 *.bak
