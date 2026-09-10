@@ -8,8 +8,8 @@ const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${wi
 const PLATFORM = 'web';
 const USER_ID = 'browser';
 const KIT_AGENT_ID = 'kit';
-const KIT_AVATAR_COLOR = '#611f69';
-const AVATAR_PALETTE = ['#e07b39', '#2b7a58', '#1164a3', '#8b3a9e', '#c0392b', '#0f8b8d', '#b8860b', '#5b6ee1'];
+const KIT_AVATAR_COLOR = '#1565c0';
+const AVATAR_PALETTE = ['#e07b39', '#2b7a58', '#1164a3', '#1976d2', '#c0392b', '#0f8b8d', '#b8860b', '#5b6ee1'];
 
 // Which team member the chat panel is currently talking to. Mirrors the
 // server's make_session_id: Kit keeps the original {platform}:{user_id}

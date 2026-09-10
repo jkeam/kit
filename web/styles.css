@@ -3,20 +3,20 @@
 :root {
     --font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 
-    --rail-bg: #350d36;
+    --rail-bg: #0b1a2e;
     --rail-btn-hover: rgba(255, 255, 255, 0.1);
-    --rail-btn-active-bg: #611f69;
+    --rail-btn-active-bg: #1565c0;
 
-    --sidebar-bg: #3f0e40;
-    --sidebar-bg-header: #350d36;
+    --sidebar-bg: #0e2340;
+    --sidebar-bg-header: #0b1a2e;
     --sidebar-text: #ffffff;
-    --sidebar-text-muted: #c8b6ca;
+    --sidebar-text-muted: #a8c4d8;
     --sidebar-hover: rgba(255, 255, 255, 0.08);
-    --sidebar-active-bg: #1164a3;
+    --sidebar-active-bg: #1976d2;
 
-    --accent: #611f69;
-    --accent-hover: #4a1750;
-    --accent-light: #ede4ee;
+    --accent: #1565c0;
+    --accent-hover: #0d47a1;
+    --accent-light: #e3f2fd;
 
     --main-bg: #ffffff;
     --panel-bg: #fbfaf9;
@@ -82,7 +82,7 @@ button, input, textarea {
     width: 36px;
     height: 36px;
     border-radius: 10px;
-    background: linear-gradient(135deg, #7c2d7f, #611f69);
+    background: linear-gradient(135deg, #1976d2, #1565c0);
     color: #fff;
     display: flex;
     align-items: center;
