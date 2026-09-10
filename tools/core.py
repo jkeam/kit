@@ -16,11 +16,12 @@ from tools.web import WEB_TOOLS, WEB_TOOL_FUNCTIONS
 from tools.browser import BROWSER_TOOLS, BROWSER_TOOL_FUNCTIONS
 from tools.scheduler import SCHEDULER_TOOLS, SCHEDULER_TOOL_FUNCTIONS
 from tools.skills import SKILLS_TOOLS, SKILLS_TOOL_FUNCTIONS
+from env_config import env_int
 
 WORKSPACE_ROOT = Path("workspace").resolve()
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SHELL_METACHARACTERS_RE = re.compile(r'[&|;`$<>]')
-SHELL_EXEC_TIMEOUT_SECONDS = int(os.environ.get("SHELL_EXEC_TIMEOUT_SECONDS", "30"))
+SHELL_EXEC_TIMEOUT_SECONDS = env_int("SHELL_EXEC_TIMEOUT_SECONDS", 30)
 
 
 def read(path: str) -> str:
@@ -181,7 +182,7 @@ def exec_shell(command: str) -> str:
         return "\n".join(output) if output else "Command completed (no output)"
 
     except subprocess.TimeoutExpired:
-        return "Error: Command timed out (30s limit)"
+        return f"Error: Command timed out ({SHELL_EXEC_TIMEOUT_SECONDS}s limit)"
     except Exception as e:
         return f"Error executing command: {e}"
 

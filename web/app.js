@@ -618,8 +618,7 @@ async function loadChatHistory() {
     }
 }
 
-// Initialize
-async function init() {
+async function loadRuntimeConfig() {
     try {
         const res = await fetch(`${API_BASE}/config`);
         if (res.ok) {
@@ -631,8 +630,16 @@ async function init() {
     } catch (error) {
         console.warn('Failed to load /config, using defaults:', error);
     }
+}
 
-    const connected = await checkConnection();
+// Initialize
+async function init() {
+    // Independent requests - run them in parallel rather than one after
+    // the other, so /config doesn't add a serial round-trip to page load.
+    const [, connected] = await Promise.all([
+        loadRuntimeConfig(),
+        checkConnection(),
+    ]);
 
     if (connected) {
         await loadChatHistory();

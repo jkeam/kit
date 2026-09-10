@@ -1,10 +1,13 @@
 # Gateway Configuration
-# NOTE: port/auth_token here are documentation only — the running server
-# reads GATEWAY_PORT / GATEWAY_HOST / GATEWAY_TOKEN from the environment
-# (see .env.example), not this file. Keep this in sync if you change those.
+# NOTE: port here is documentation only — the running server reads
+# GATEWAY_PORT / GATEWAY_HOST from the environment (see .env.example), not
+# this file. Keep this in sync if you change those.
+# auth_token is aspirational: GATEWAY_TOKEN is not currently read or
+# enforced by the server anywhere — there is no request authentication yet
+# (see CLAUDE.md "No authentication" limitation).
 gateway:
   port: 18789
-  auth_token: ${GATEWAY_TOKEN}  # Optional, set in .env
+  auth_token: ${GATEWAY_TOKEN}  # Not yet enforced by the server
 
 # LLM Stack Connection
 llama_stack:

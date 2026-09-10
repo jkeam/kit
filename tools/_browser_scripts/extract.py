@@ -1,12 +1,13 @@
 """Fixed helper script for browser_extract. Run as a subprocess with
 argv = [url, selector] so values are never interpolated into source code.
 """
-import os
 import sys
 
 from playwright.sync_api import sync_playwright
 
-NAV_TIMEOUT_MS = int(os.environ.get("BROWSER_NAV_TIMEOUT_MS", "30000"))
+from _common import env_int
+
+NAV_TIMEOUT_MS = env_int("BROWSER_NAV_TIMEOUT_MS", 30000)
 
 
 def main() -> None:

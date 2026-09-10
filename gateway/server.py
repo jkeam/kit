@@ -25,6 +25,7 @@ import json
 import asyncio
 
 import os
+from env_config import env_int
 from gateway.session_manager import SessionManager
 from gateway.scheduler import run_scheduler
 
@@ -171,7 +172,7 @@ async def get_config():
     """Runtime-tunable settings the web UI reads on load, so they can be
     changed via env vars without editing static JS."""
     return {
-        "ws_max_reconnect_attempts": int(os.environ.get("WS_MAX_RECONNECT_ATTEMPTS", "5")),
+        "ws_max_reconnect_attempts": env_int("WS_MAX_RECONNECT_ATTEMPTS", 5),
     }
 
 
@@ -437,5 +438,5 @@ def start_server(host: str = "127.0.0.1", port: int = 18789):
 if __name__ == "__main__":
     start_server(
         host=os.environ.get("GATEWAY_HOST", "127.0.0.1"),
-        port=int(os.environ.get("GATEWAY_PORT", "18789")),
+        port=env_int("GATEWAY_PORT", 18789),
     )

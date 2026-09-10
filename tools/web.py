@@ -8,7 +8,9 @@ from tavily import TavilyClient
 import html2text
 import httpx
 
-WEB_FETCH_TIMEOUT_SECONDS = float(os.environ.get("WEB_FETCH_TIMEOUT_SECONDS", "30.0"))
+from env_config import env_float
+
+WEB_FETCH_TIMEOUT_SECONDS = env_float("WEB_FETCH_TIMEOUT_SECONDS", 30.0)
 
 
 def web_search(query: str, max_results: int = 5) -> str:
