@@ -23,6 +23,7 @@ const chatMessages = document.getElementById('chat-messages');
 const chatScrollContainer = chatMessages.closest('.chat-card-body') || chatMessages;
 const chatInput = document.getElementById('chat-input');
 const sendButton = document.getElementById('send-button');
+const clearChatButton = document.getElementById('clear-chat-button');
 const connectionStatus = document.getElementById('connection-status');
 const connectionText = document.getElementById('connection-text');
 const messageCountSpan = document.getElementById('message-count');
@@ -182,6 +183,33 @@ async function sendMessage() {
         }
     }
 }
+
+// Clear the current chat session (server history + in-memory agent state)
+async function clearChat() {
+    if (!confirm('Clear this chat session? This cannot be undone.')) return;
+
+    const sessionId = `${PLATFORM}:${USER_ID}`;
+    clearChatButton.disabled = true;
+    try {
+        const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, {
+            method: 'DELETE',
+        });
+        if (!response.ok && response.status !== 404) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        chatMessages.innerHTML = '';
+        messageCount = 0;
+        messageCountSpan.textContent = '0 messages';
+        addMessage('Chat session cleared', 'system');
+        loadSessions();
+    } catch (error) {
+        addMessage(`Error clearing chat: ${error.message}`, 'system');
+    } finally {
+        clearChatButton.disabled = false;
+    }
+}
+
+clearChatButton.addEventListener('click', clearChat);
 
 function finishStreaming() {
     streamingMessageDiv = null;

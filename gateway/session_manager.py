@@ -182,7 +182,9 @@ class SessionManager:
 
     def clear_session(self, session_id: str) -> bool:
         """
-        Clear a specific session.
+        Clear a specific session, including any persisted history on disk
+        (even if no in-memory session currently exists for it, e.g. after
+        a server restart where history was loaded but nothing sent yet).
 
         Args:
             session_id: Session ID to clear
@@ -190,11 +192,14 @@ class SessionManager:
         Returns:
             True if cleared, False if not found
         """
-        if session_id in self.sessions:
+        existed = session_id in self.sessions
+        if existed:
             del self.sessions[session_id]
-            self.clear_messages(session_id)
-            return True
-        return False
+
+        had_history = self._session_file(session_id).exists()
+        self.clear_messages(session_id)
+
+        return existed or had_history
 
     def cleanup_inactive_sessions(self, max_age_minutes: int = 60):
         """
