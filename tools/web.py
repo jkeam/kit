@@ -12,43 +12,82 @@ from env_config import env_float
 
 WEB_FETCH_TIMEOUT_SECONDS = env_float("WEB_FETCH_TIMEOUT_SECONDS", 30.0)
 
+VALID_SEARCH_PROVIDERS = ("tavily", "brave")
 
-def web_search(query: str, max_results: int = 5) -> str:
-    """
-    Search the web using Tavily API.
 
-    Args:
-        query: Search query
-        max_results: Maximum number of results (default: 5)
-
-    Returns:
-        Formatted search results with titles, URLs, and snippets
-    """
+def _search_tavily(query: str, max_results: int) -> str:
     api_key = os.getenv("TAVILY_API_KEY")
-
     if not api_key:
         return "Error: TAVILY_API_KEY not set. Get one at https://tavily.com"
 
+    client = TavilyClient(api_key=api_key)
+    response = client.search(query, max_results=max_results)
+
+    if not response or "results" not in response:
+        return "No results found"
+
+    formatted = []
+    for i, result in enumerate(response["results"], 1):
+        formatted.append(
+            f"{i}. **{result.get('title', 'No title')}**\n"
+            f"   URL: {result.get('url', 'N/A')}\n"
+            f"   {result.get('content', 'No description')}\n"
+        )
+    return "\n".join(formatted)
+
+
+def _search_brave(query: str, max_results: int) -> str:
+    api_key = os.getenv("BRAVE_API_KEY")
+    if not api_key:
+        return "Error: BRAVE_API_KEY not set. Get one at https://brave.com/search/api/"
+
+    response = httpx.get(
+        "https://api.search.brave.com/res/v1/web/search",
+        params={"q": query, "count": max_results},
+        headers={
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "X-Subscription-Token": api_key,
+        },
+        timeout=WEB_FETCH_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    results = data.get("web", {}).get("results", [])
+    if not results:
+        return "No results found"
+
+    formatted = []
+    for i, result in enumerate(results, 1):
+        formatted.append(
+            f"{i}. **{result.get('title', 'No title')}**\n"
+            f"   URL: {result.get('url', 'N/A')}\n"
+            f"   {result.get('description', 'No description')}\n"
+        )
+    return "\n".join(formatted)
+
+
+_SEARCH_PROVIDERS = {
+    "tavily": _search_tavily,
+    "brave": _search_brave,
+}
+
+
+def web_search(query: str, max_results: int = 5, provider: str = "") -> str:
+    """
+    Search the web using the specified provider.
+    """
+    if not provider:
+        provider = os.getenv("WEB_SEARCH_PROVIDER", "tavily").lower()
+
+    if provider not in _SEARCH_PROVIDERS:
+        return f"Error: unknown search provider '{provider}'. Valid options: {', '.join(VALID_SEARCH_PROVIDERS)}"
+
     try:
-        client = TavilyClient(api_key=api_key)
-        response = client.search(query, max_results=max_results)
-
-        if not response or "results" not in response:
-            return "No results found"
-
-        # Format results
-        formatted = []
-        for i, result in enumerate(response["results"], 1):
-            formatted.append(
-                f"{i}. **{result.get('title', 'No title')}**\n"
-                f"   URL: {result.get('url', 'N/A')}\n"
-                f"   {result.get('content', 'No description')}\n"
-            )
-
-        return "\n".join(formatted)
-
+        return _SEARCH_PROVIDERS[provider](query, max_results)
     except Exception as e:
-        return f"Error searching web: {e}"
+        return f"Error searching web ({provider}): {e}"
 
 
 def web_fetch(url: str, max_chars: int = 10000) -> str:
@@ -101,7 +140,7 @@ WEB_TOOLS = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web and return relevant results with URLs and snippets",
+            "description": "Search the web and return relevant results with URLs and snippets. Uses the provider set by WEB_SEARCH_PROVIDER env var (default: tavily) unless overridden.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -112,6 +151,11 @@ WEB_TOOLS = [
                     "max_results": {
                         "type": "integer",
                         "description": "Maximum number of results (default: 5)"
+                    },
+                    "provider": {
+                        "type": "string",
+                        "enum": ["tavily", "brave"],
+                        "description": "Search provider to use (default: WEB_SEARCH_PROVIDER env var, or tavily)"
                     }
                 },
                 "required": ["query"]
