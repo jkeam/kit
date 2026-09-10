@@ -155,10 +155,14 @@ Built with **PatternFly v5** design system:
 
 ## ⚙️ Configuration
 
-### Gateway (config.yaml)
-- Port: 18789
-- Session isolation: platform:user_id
-- CORS: Enabled for development
+### Gateway (.env)
+- Host/port: `GATEWAY_HOST` / `GATEWAY_PORT` (default `127.0.0.1:18789`)
+- Auth: `GATEWAY_TOKEN` (optional — unset leaves the gateway open for local use)
+- CORS: `CORS_ORIGINS` (default `*`, open for local dev)
+- Session isolation: `platform:user_id`, always on (not configurable)
+
+### Tool safety (config.yaml)
+- `tools.safety.shell_confirm_destructive`, `allowed_commands`
 
 ### LlamaStack (llama-stack-run.yaml)
 - Provider: RedHat MaaS

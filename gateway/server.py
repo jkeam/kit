@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,11 +23,43 @@ from datetime import datetime, timezone
 import uvicorn
 import json
 import asyncio
+import secrets
 
 import os
 from env_config import env_int
 from gateway.session_manager import SessionManager
 from gateway.scheduler import run_scheduler
+
+
+def _require_gateway_token(authorization: Optional[str] = Header(default=None)) -> None:
+    """Dependency that gates HTTP routes behind GATEWAY_TOKEN.
+
+    No-op (open access) when GATEWAY_TOKEN is unset, preserving the
+    zero-config local/dev experience. When it's set, requires a matching
+    `Authorization: Bearer <token>` header.
+    """
+    token = os.environ.get("GATEWAY_TOKEN")
+    if not token:
+        return
+
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    provided = authorization[len("Bearer "):]
+    if not secrets.compare_digest(provided, token):
+        raise HTTPException(status_code=401, detail="Invalid gateway token")
+
+
+def _websocket_token_valid(websocket: WebSocket) -> bool:
+    """Same check as _require_gateway_token, adapted for the WebSocket
+    handshake (browsers can't set custom headers on a WS connection, so the
+    token travels as a query param instead: `/ws?token=...`)."""
+    token = os.environ.get("GATEWAY_TOKEN")
+    if not token:
+        return True
+
+    provided = websocket.query_params.get("token")
+    return bool(provided) and secrets.compare_digest(provided, token)
 
 
 def _now() -> str:
@@ -170,13 +202,19 @@ async def health_check():
 @app.get("/config")
 async def get_config():
     """Runtime-tunable settings the web UI reads on load, so they can be
-    changed via env vars without editing static JS."""
+    changed via env vars without editing static JS.
+
+    Deliberately left open (no _require_gateway_token dependency) — the web
+    UI needs `auth_required` before it knows whether it has to prompt for a
+    token in the first place.
+    """
     return {
         "ws_max_reconnect_attempts": env_int("WS_MAX_RECONNECT_ATTEMPTS", 5),
+        "auth_required": bool(os.environ.get("GATEWAY_TOKEN")),
     }
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat", response_model=ChatResponse, dependencies=[Depends(_require_gateway_token)])
 async def chat(request: ChatRequest):
     """
     Send a message to the assistant.
@@ -236,7 +274,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
 
 
-@app.get("/sessions", response_model=List[SessionStats])
+@app.get("/sessions", response_model=List[SessionStats], dependencies=[Depends(_require_gateway_token)])
 async def list_sessions():
     """List all active sessions."""
     if not session_manager:
@@ -256,7 +294,7 @@ async def list_sessions():
     ]
 
 
-@app.get("/sessions/{session_id}")
+@app.get("/sessions/{session_id}", dependencies=[Depends(_require_gateway_token)])
 async def get_session(session_id: str):
     """Get specific session details."""
     if not session_manager:
@@ -269,7 +307,7 @@ async def get_session(session_id: str):
     return stats
 
 
-@app.delete("/sessions/{session_id}")
+@app.delete("/sessions/{session_id}", dependencies=[Depends(_require_gateway_token)])
 async def clear_session(session_id: str):
     """Clear a specific session."""
     if not session_manager:
@@ -282,7 +320,7 @@ async def clear_session(session_id: str):
     return {"message": f"Session {session_id} cleared"}
 
 
-@app.post("/sessions/cleanup")
+@app.post("/sessions/cleanup", dependencies=[Depends(_require_gateway_token)])
 async def cleanup_sessions(max_age_minutes: int = 60):
     """Cleanup inactive sessions."""
     if not session_manager:
@@ -298,7 +336,7 @@ async def cleanup_sessions(max_age_minutes: int = 60):
 SOUL_PATH = Path(__file__).parent.parent / "workspace" / "SOUL.md"
 
 
-@app.get("/persona")
+@app.get("/persona", dependencies=[Depends(_require_gateway_token)])
 async def get_persona():
     """Get the current SOUL.md content."""
     content = SOUL_PATH.read_text() if SOUL_PATH.exists() else ""
@@ -309,7 +347,7 @@ class PersonaUpdate(BaseModel):
     content: str
 
 
-@app.get("/sessions/{session_id}/messages")
+@app.get("/sessions/{session_id}/messages", dependencies=[Depends(_require_gateway_token)])
 async def get_session_messages(session_id: str):
     """Get persisted message history for a session."""
     if not session_manager:
@@ -317,7 +355,7 @@ async def get_session_messages(session_id: str):
     return session_manager.get_messages(session_id)
 
 
-@app.put("/persona")
+@app.put("/persona", dependencies=[Depends(_require_gateway_token)])
 async def update_persona(update: PersonaUpdate):
     """Update SOUL.md content."""
     SOUL_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -334,7 +372,15 @@ async def websocket_endpoint(websocket: WebSocket):
     - Client connects
     - Server sends events: chat_message, session_update, tool_execution
     - Client can send: ping, subscribe
+
+    Requires ?token=<GATEWAY_TOKEN> in the connection URL when GATEWAY_TOKEN
+    is set (browsers can't attach an Authorization header to a WebSocket
+    handshake, so the token travels as a query param here instead).
     """
+    if not _websocket_token_valid(websocket):
+        await websocket.close(code=1008)
+        return
+
     await manager.connect(websocket)
 
     try:

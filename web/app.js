@@ -15,6 +15,35 @@ let wsReconnectAttempts = 0;
 // server-side (WS_MAX_RECONNECT_ATTEMPTS env var) without editing this file.
 let wsMaxReconnectAttempts = 5;
 
+// GATEWAY_TOKEN support. /config (unauthenticated, so it's reachable before
+// we know whether a token is even needed) tells us via auth_required
+// whether the server expects one; if so and we don't have one cached yet,
+// init() prompts for it once. Stored in localStorage so it survives reloads
+// (per-browser only — never sent anywhere but this gateway's own origin).
+let authToken = null;
+try {
+    authToken = localStorage.getItem('kit_gateway_token');
+} catch (error) {
+    // localStorage unavailable (private mode, blocked) - just won't persist.
+}
+
+async function apiFetch(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+    if (response.status === 401 && authToken) {
+        // Stored token is stale/wrong - drop it so a refresh re-prompts
+        // instead of failing silently on every request forever.
+        authToken = null;
+        try { localStorage.removeItem('kit_gateway_token'); } catch (error) {
+            // ignore
+        }
+    }
+    return response;
+}
+
 // Streaming state
 let streamingMessageDiv = null;
 let streamingContentDiv = null;
@@ -69,7 +98,7 @@ document.querySelectorAll('.pf-v5-c-tabs__link').forEach(btn => {
 // Check connection
 async function checkConnection() {
     try {
-        const response = await fetch(`${API_BASE}/health`);
+        const response = await apiFetch(`${API_BASE}/health`);
         if (response.ok) {
             connectionStatus.classList.remove('pf-m-red');
             connectionStatus.classList.add('pf-m-green');
@@ -163,7 +192,7 @@ async function sendMessage() {
         // Fallback to POST when WebSocket is not connected
         addThinkingIndicator();
         try {
-            const response = await fetch(`${API_BASE}/chat`, {
+            const response = await apiFetch(`${API_BASE}/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ platform: PLATFORM, user_id: USER_ID, message: message }),
@@ -193,7 +222,7 @@ async function clearChat() {
     const sessionId = `${PLATFORM}:${USER_ID}`;
     clearChatButton.disabled = true;
     try {
-        const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, {
+        const response = await apiFetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, {
             method: 'DELETE',
         });
         if (!response.ok && response.status !== 404) {
@@ -238,7 +267,7 @@ async function loadSessions() {
     sessionsList.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
 
     try {
-        const response = await fetch(`${API_BASE}/sessions`);
+        const response = await apiFetch(`${API_BASE}/sessions`);
         if (!response.ok) throw new Error('Failed to load sessions');
 
         const sessions = await response.json();
@@ -272,7 +301,7 @@ async function searchMemory() {
     memoryResults.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
 
     try {
-        const response = await fetch(`${API_BASE}/chat`, {
+        const response = await apiFetch(`${API_BASE}/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -321,7 +350,7 @@ async function loadSchedules() {
     schedulesList.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
 
     try {
-        const response = await fetch(`${API_BASE}/chat`, {
+        const response = await apiFetch(`${API_BASE}/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -361,7 +390,7 @@ async function loadSkills() {
     skillsList.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
 
     try {
-        const response = await fetch(`${API_BASE}/chat`, {
+        const response = await apiFetch(`${API_BASE}/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -403,7 +432,13 @@ function connectWebSocket() {
     }
 
     try {
-        ws = new WebSocket(`${WS_BASE}/ws`);
+        // Browsers can't set an Authorization header on a WebSocket
+        // handshake, so the token (when we have one) travels as a query
+        // param instead — matches the server's _websocket_token_valid check.
+        const wsUrl = authToken
+            ? `${WS_BASE}/ws?token=${encodeURIComponent(authToken)}`
+            : `${WS_BASE}/ws`;
+        ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
             console.log('WebSocket connected');
@@ -560,7 +595,7 @@ async function loadPersona() {
     personaEditor.disabled = true;
     personaStatus.textContent = '';
     try {
-        const response = await fetch(`${API_BASE}/persona`);
+        const response = await apiFetch(`${API_BASE}/persona`);
         if (!response.ok) throw new Error('Failed to load persona');
         const data = await response.json();
         personaEditor.value = data.content;
@@ -577,7 +612,7 @@ async function savePersona() {
     savePersonaBtn.textContent = 'Saving...';
     personaStatus.textContent = '';
     try {
-        const response = await fetch(`${API_BASE}/persona`, {
+        const response = await apiFetch(`${API_BASE}/persona`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content: personaEditor.value }),
@@ -599,7 +634,7 @@ savePersonaBtn.addEventListener('click', savePersona);
 async function loadChatHistory() {
     const sessionId = `${PLATFORM}:${USER_ID}`;
     try {
-        const response = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/messages`);
+        const response = await apiFetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/messages`);
         if (!response.ok) return;
         const messages = await response.json();
         for (const msg of messages) {
@@ -618,13 +653,32 @@ async function loadChatHistory() {
     }
 }
 
+function promptForAuthToken() {
+    const entered = window.prompt(
+        'This Kit gateway requires a token (GATEWAY_TOKEN) to access the API.\n' +
+        'Enter it to continue:'
+    );
+    if (!entered) return;
+
+    authToken = entered.trim();
+    try {
+        localStorage.setItem('kit_gateway_token', authToken);
+    } catch (error) {
+        // localStorage unavailable — token still works for this page load,
+        // just won't survive a refresh.
+    }
+}
+
 async function loadRuntimeConfig() {
     try {
-        const res = await fetch(`${API_BASE}/config`);
+        const res = await apiFetch(`${API_BASE}/config`);
         if (res.ok) {
             const config = await res.json();
             if (typeof config.ws_max_reconnect_attempts === 'number') {
                 wsMaxReconnectAttempts = config.ws_max_reconnect_attempts;
+            }
+            if (config.auth_required && !authToken) {
+                promptForAuthToken();
             }
         }
     } catch (error) {

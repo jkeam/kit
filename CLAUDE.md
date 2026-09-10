@@ -175,10 +175,7 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
 
 ## Configuration Files
 
-**config.yaml** - Gateway configuration
-- Port: 18789
-- Tool safety settings
-- Memory provider: none (Phase 1, embeddings added in Phase 3)
+**config.yaml** - Tool safety settings only (`tools.safety.shell_confirm_destructive`, `allowed_commands`). Gateway host/port/auth, LLM provider/model, and memory retention are all env-var-driven (see `.env.example`) rather than living here — see "LLM provider selection" below and `.env.example` for the full list.
 
 **llama-stack-run.yaml** - LlamaStack server config
 - Provider: RedHat MaaS (OpenAI-compatible)
@@ -214,7 +211,7 @@ When adding memory features:
 - Shell commands: `sudo` blocked, 30s timeout
 - File operations: Full filesystem access (no sandboxing)
 - Browser automation: Runs in subprocess for isolation
-- **No authentication** - designed for local/trusted use only
+- **Authentication is opt-in**: unset `GATEWAY_TOKEN` (the default) leaves the gateway open for local/trusted use; setting it requires a matching bearer token on every API route and the `/ws` WebSocket (see `gateway/server.py:_require_gateway_token`)
 
 ### Session Isolation
 - Sessions keyed by `{platform}:{user_id}` (e.g., "web:anonymous", "cli:jkeam")
@@ -256,7 +253,7 @@ print(json.dumps({"result": "success"}))
 - **Browser automation**: Basic actions only (screenshot, navigate, extract)
 - **No persistence**: WebSocket sessions are memory-only
 - **Synchronous processing**: One message at a time per session
-- **No authentication**: Local use only, full filesystem access
+- **Authentication is opt-in**: set `GATEWAY_TOKEN` to require a bearer token; unset by default (local use only), and tools still have full filesystem access regardless
 
 ## Testing the Application
 

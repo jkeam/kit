@@ -50,4 +50,5 @@ workspace/chroma/
 *.tmp
 *.bak
 
-ignore
+ignore/*
+kit-code-review.md

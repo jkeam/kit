@@ -1,40 +1,11 @@
-# Gateway Configuration
-# NOTE: port here is documentation only — the running server reads
-# GATEWAY_PORT / GATEWAY_HOST from the environment (see .env.example), not
-# this file. Keep this in sync if you change those.
-# auth_token is aspirational: GATEWAY_TOKEN is not currently read or
-# enforced by the server anywhere — there is no request authentication yet
-# (see CLAUDE.md "No authentication" limitation).
-gateway:
-  port: 18789
-  auth_token: ${GATEWAY_TOKEN}  # Not yet enforced by the server
+# Gateway host/port/auth, LLM provider/model, and memory retention are all
+# configured via environment variables (see .env.example) — not here, to
+# avoid two sources of truth for the same settings.
+#
+# This file only carries tools.safety below, which is the one block actually
+# read by the code (tools/core.py:_load_shell_safety_config).
 
-# LLM Stack Connection
-llama_stack:
-  base_url: http://localhost:8321
-  default_model: qwen3-14b
-
-# Memory Configuration
-memory:
-  vector_provider: none  # Phase 1: no vector search yet
-  embedding_model: text-embedding-3-small
-  daily_log_retention: 7  # days
-
-# Tools Configuration
 tools:
-  enabled:
-    - file_ops
-    - shell_exec
-    - memory
-
   safety:
     shell_confirm_destructive: true
     allowed_commands: []  # Empty = all allowed (use with caution)
-
-# Channels (Phase 2 - disabled for now)
-channels:
-  - cli
-  # - telegram:
-  #     bot_token: ${TELEGRAM_BOT_TOKEN}
-  # - discord:
-  #     bot_token: ${DISCORD_BOT_TOKEN}

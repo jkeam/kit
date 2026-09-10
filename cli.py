@@ -9,6 +9,7 @@ Usage:
     python cli.py --stats
 """
 
+import os
 import sys
 import httpx
 from rich.console import Console
@@ -19,6 +20,14 @@ from rich.markdown import Markdown
 GATEWAY_URL = "http://localhost:18789"
 PLATFORM = "cli"
 USER_ID = "local"  # Single user for CLI
+
+# Matches gateway/server.py's _require_gateway_token: if the gateway has
+# GATEWAY_TOKEN set, requests need this to authenticate.
+_AUTH_HEADERS = (
+    {"Authorization": f"Bearer {os.environ['GATEWAY_TOKEN']}"}
+    if os.environ.get("GATEWAY_TOKEN")
+    else {}
+)
 
 
 def main():
@@ -37,7 +46,7 @@ def main():
     # Handle --stats
     if arg == "--stats":
         try:
-            response = httpx.get(f"{GATEWAY_URL}/sessions")
+            response = httpx.get(f"{GATEWAY_URL}/sessions", headers=_AUTH_HEADERS)
             response.raise_for_status()
             sessions = response.json()
 
@@ -84,6 +93,7 @@ def main():
                 "user_id": USER_ID,
                 "message": user_message
             },
+            headers=_AUTH_HEADERS,
             timeout=30.0
         )
         response.raise_for_status()
