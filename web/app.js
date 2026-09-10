@@ -201,7 +201,11 @@ if (detailsHidden) hideDetailsPanel(); else showDetailsPanel();
 toggleDetailsBtn.addEventListener('click', () => {
     if (detailsPanelEl.hidden) {
         showDetailsPanel();
-        renderMemberDetails(currentAgentId);
+        if (currentMode === 'broadcast') {
+            renderBroadcastDetails();
+        } else {
+            renderMemberDetails(currentAgentId);
+        }
     } else {
         hideDetailsPanel();
     }
@@ -494,6 +498,9 @@ async function selectBroadcastChannel() {
     chatHeaderStatusText.textContent = '';
 
     await loadChatHistory();
+    if (!detailsPanelEl.hidden && detailsMode !== 'new') {
+        renderBroadcastDetails();
+    }
 }
 
 function finishStreaming() {
@@ -722,6 +729,48 @@ async function savePersonaFrom(textareaEl, statusEl, btnEl) {
     } finally {
         if (btnEl) btnEl.disabled = false;
     }
+}
+
+function renderBroadcastDetails() {
+    detailsMode = 'member';
+    detailsTitle.textContent = 'Details';
+
+    const members = Object.values(agentsById);
+
+    let html = `
+        <div class="details-avatar-row">
+            <div class="avatar" style="width:48px;height:48px;font-size:18px;border-radius:12px;background:#5e40be">#</div>
+            <div>
+                <div class="details-name">team</div>
+                <div class="details-status-line">${members.length} member${members.length !== 1 ? 's' : ''}</div>
+            </div>
+        </div>
+    `;
+
+    html += `
+        <div class="details-section">
+            <div class="details-section-label">About</div>
+            <div class="details-description">Broadcast channel for messaging all team members at once.</div>
+        </div>
+    `;
+
+    html += `<div class="details-section"><div class="details-section-label">Members</div>`;
+    members.forEach(agent => {
+        const bg = avatarColorFor(agent.id);
+        const statusCls = statusClassFor(agent.id);
+        const statusTxt = statusTextFor(agent.id);
+        html += `
+            <div class="details-meta-row" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <div class="avatar" style="width:28px;height:28px;font-size:11px;background:${bg}">${initialsFor(agent.name)}</div>
+                <span>${escapeHtml(agent.name)}</span>
+                <span class="status-dot ${statusCls}" style="margin-left:auto;"></span>
+                <span style="font-size:12px;color:var(--pf-v5-global--Color--200)">${escapeHtml(statusTxt)}</span>
+            </div>
+        `;
+    });
+    html += `</div>`;
+
+    detailsBody.innerHTML = html;
 }
 
 async function renderMemberDetails(agentId) {
@@ -971,7 +1020,7 @@ function renderAddTeammateForm() {
             <select class="form-control" id="new-agent-template"></select>
         </div>
         <div class="form-group">
-            <label class="form-label">Id</label>
+            <label class="form-label">Id <span style="font-weight:normal;color:var(--pf-v5-global--Color--200)">(cannot be changed later)</span></label>
             <input class="form-control" id="new-agent-id" type="text" placeholder="e.g. tester-1">
         </div>
         <div class="form-group">
