@@ -109,7 +109,6 @@ const connectionStatus = document.getElementById('connection-status');
 const messageCountSpan = document.getElementById('message-count');
 const refreshSchedulesBtn = document.getElementById('refresh-schedules');
 const schedulesList = document.getElementById('schedules-list');
-const sessionsList = document.getElementById('sessions-list');
 const refreshActivityBtn = document.getElementById('refresh-activity');
 const activityList = document.getElementById('activity-list');
 
@@ -534,7 +533,6 @@ async function clearChat() {
         messageCount = 0;
         messageCountSpan.textContent = '0 messages';
         addMessage('Chat session cleared', 'system');
-        loadSessions();
     } catch (error) {
         addMessage(`Error clearing chat: ${error.message}`, 'system');
     } finally {
@@ -1649,13 +1647,12 @@ addTeammateBtn.addEventListener('click', () => {
     closeMobileSidebar();
 });
 
-// --- Workspace overlay: Team Activity / Schedules / Sessions ---
+// --- Workspace overlay: Team Activity / Schedules ---
 // Workspace-wide sections that aren't tied to any one team member.
 
 const WORKSPACE_LOADERS = {
     activity: loadActivity,
     schedules: loadSchedules,
-    sessions: loadSessions,
 };
 
 function openWorkspacePanel(tabName) {
@@ -1687,35 +1684,6 @@ workspaceOverlay.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !workspaceOverlay.hidden) closeWorkspacePanel();
 });
-
-// Load sessions
-async function loadSessions() {
-    sessionsList.innerHTML = '<div class="spinner"></div>';
-
-    try {
-        const response = await apiFetch(`${API_BASE}/sessions`);
-        if (!response.ok) throw new Error('Failed to load sessions');
-
-        const sessions = await response.json();
-
-        if (sessions.length === 0) {
-            sessionsList.innerHTML = '<p class="empty-state">No active sessions</p>';
-            return;
-        }
-
-        sessionsList.innerHTML = sessions.map(session => `
-            <div class="session-card">
-                <h4>${escapeHtml(session.session_id)}</h4>
-                <p><strong>Platform:</strong> ${escapeHtml(session.platform)}</p>
-                <p><strong>Messages:</strong> ${session.message_count}</p>
-                <p><strong>Last active:</strong> ${new Date(session.last_active).toLocaleString()}</p>
-            </div>
-        `).join('');
-
-    } catch (error) {
-        sessionsList.innerHTML = `<p class="empty-state">Error loading sessions: ${escapeHtml(error.message)}</p>`;
-    }
-}
 
 // --- Details panel: Memory / Tools / Skills (scoped to current agent) ---
 
@@ -1873,28 +1841,29 @@ async function loadSchedules() {
     schedulesList.innerHTML = '<div class="spinner"></div>';
 
     try {
-        const response = await apiFetch(`${API_BASE}/chat`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                platform: PLATFORM,
-                user_id: USER_ID,
-                message: 'Call the schedule_list tool and reply with ONLY its exact output, verbatim, with no additional commentary, greeting, or suggestions.'
-            })
-        });
+        const response = await apiFetch(`${API_BASE}/schedules`);
 
         if (!response.ok) throw new Error('Failed to load schedules');
 
-        const data = await response.json();
+        const schedules = await response.json();
 
-        // Display raw response (schedules formatted by tool)
-        schedulesList.innerHTML = `
-            <div class="schedule-card">
-                <pre style="white-space: pre-wrap; font-size: 13px; margin: 0; color: var(--text-secondary);">${escapeHtml(data.response)}</pre>
-            </div>
-        `;
+        if (!schedules.length) {
+            schedulesList.innerHTML = `<p class="empty-state">No schedules found. Ask Kit to create a schedule (e.g. "schedule a daily reminder at 9am").</p>`;
+            return;
+        }
+
+        schedulesList.innerHTML = schedules.map(s => {
+            const status = s.enabled ? '✓ Enabled' : '✗ Disabled';
+            return `
+                <div class="schedule-card">
+                    <pre style="white-space: pre-wrap; font-size: 13px; margin: 0; color: var(--text-secondary);">ID: ${escapeHtml(s.id)} (${escapeHtml(status)})
+  Cron: ${escapeHtml(s.cron)}
+  Task: ${escapeHtml(s.task)}
+  Description: ${escapeHtml(s.description || 'N/A')}
+  Runs: ${s.run_count || 0}
+  Last run: ${escapeHtml(s.last_run || 'Never')}</pre>
+                </div>`;
+        }).join('\n');
 
     } catch (error) {
         schedulesList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
@@ -2308,7 +2277,6 @@ function handleWebSocketMessage(data) {
             } else if (!isOwnSession) {
                 addMessage(`[${data.session_id}] ${data.message}`, 'assistant');
             }
-            loadSessions();
             break;
 
         case 'pong':
@@ -2395,7 +2363,6 @@ async function init() {
         await loadAgents();
         await loadChatHistory();
         addMessage('Connected to Kit', 'system');
-        loadSessions();
         connectWebSocket();
     } else {
         addMessage(`Failed to connect to gateway. Make sure it's running at ${API_BASE}.`, 'system');

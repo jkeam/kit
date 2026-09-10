@@ -368,6 +368,18 @@ async def cleanup_sessions(max_age_minutes: int = 60):
     }
 
 
+SCHEDULES_PATH = Path(__file__).parent.parent / "workspace" / "schedules" / "schedules.json"
+
+
+@app.get("/schedules", dependencies=[Depends(_require_gateway_token)])
+async def list_schedules():
+    """List all scheduled tasks."""
+    if not SCHEDULES_PATH.exists():
+        return []
+    schedules = json.loads(SCHEDULES_PATH.read_text())
+    return schedules
+
+
 SOUL_PATH = Path(__file__).parent.parent / "workspace" / "SOUL.md"
 
 

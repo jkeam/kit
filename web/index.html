@@ -32,9 +32,6 @@
             <button class="rail-btn" data-panel="schedules" title="Schedules" aria-label="Schedules">
                 <i class="fas fa-clock"></i>
             </button>
-            <button class="rail-btn" data-panel="sessions" title="Sessions" aria-label="Sessions">
-                <i class="fas fa-layer-group"></i>
-            </button>
             <div class="rail-spacer"></div>
 
             <div class="rail-status" id="connection-status" title="Disconnected">
@@ -111,7 +108,7 @@
         </aside>
     </div>
 
-    <!-- Workspace overlay: Team Activity / Schedules / Sessions -->
+    <!-- Workspace overlay: Team Activity / Schedules -->
     <div class="workspace-overlay" id="workspace-overlay" hidden>
         <div class="workspace-modal">
             <div class="workspace-modal-header">
@@ -121,9 +118,6 @@
                     </button>
                     <button class="workspace-tab" data-tab="schedules">
                         <i class="fas fa-clock"></i> Schedules
-                    </button>
-                    <button class="workspace-tab" data-tab="sessions">
-                        <i class="fas fa-layer-group"></i> Sessions
                     </button>
                 </div>
                 <button class="icon-action-btn" id="close-workspace-btn" title="Close" aria-label="Close">
@@ -141,9 +135,6 @@
                     <div id="schedules-list"></div>
                 </div>
 
-                <div id="sessions-tab" class="tab-content">
-                    <div id="sessions-list"></div>
-                </div>
             </div>
         </div>
     </div>
