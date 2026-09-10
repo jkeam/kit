@@ -537,7 +537,7 @@ async def update_agent(agent_id: str, request: UpdateAgentRequest):
 async def delete_agent(agent_id: str):
     sm = _require_session_manager()
     try:
-        existed = sm.agent_registry.delete_agent(agent_id)
+        existed = sm.agent_registry.delete_agent(agent_id, embeddings=sm.embeddings)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not existed:

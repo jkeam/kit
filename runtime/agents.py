@@ -259,7 +259,7 @@ class AgentRegistry:
 
         return self.resolve(id)
 
-    def delete_agent(self, id: str) -> bool:
+    def delete_agent(self, id: str, embeddings=None) -> bool:
         if id == KIT_AGENT_ID:
             raise ValueError("Cannot delete the built-in 'kit' agent")
         path = self._agent_meta_path(id)
@@ -269,6 +269,18 @@ class AgentRegistry:
         soul_dir = self.agents_dir / id
         if soul_dir.exists():
             shutil.rmtree(soul_dir)
+
+        memory_dir = self.workspace_dir / "memory" / id
+        if memory_dir.exists():
+            shutil.rmtree(memory_dir)
+
+        if embeddings:
+            collection_name = f"agent_{id}_knowledge"
+            try:
+                embeddings.client.delete_collection(collection_name)
+            except Exception:
+                pass
+
         return existed
 
     # ---- validation ----
