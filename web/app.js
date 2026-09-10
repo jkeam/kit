@@ -151,10 +151,15 @@ function statusClassFor(agentId) {
 
 function statusTextFor(agentId) {
     const status = agentStatuses[agentId];
-    if (status && status.status === 'busy') {
+    if (!status) return 'Idle';
+    if (status.status === 'busy') {
         return status.current_task ? `Busy — ${status.current_task}` : 'Busy';
     }
-    return agentId === KIT_AGENT_ID ? 'Manager' : 'Available';
+    return 'Available';
+}
+
+function roleLabelFor(agentId) {
+    return agentId === KIT_AGENT_ID ? 'Manager' : '';
 }
 
 // Info/details panel visibility persists per-browser via localStorage.
@@ -449,6 +454,7 @@ function updateChatHeaderForCurrentAgent() {
     chatHeaderName.title = currentSessionId();
     chatInput.placeholder = `Message ${agent.name}…`;
 
+    chatTargetStatusDot.style.display = '';
     chatTargetStatusDot.classList.remove('idle', 'busy');
     const cls = statusClassFor(currentAgentId);
     if (cls) chatTargetStatusDot.classList.add(cls);
@@ -484,7 +490,8 @@ async function selectBroadcastChannel() {
     chatHeaderName.title = broadcastSessionId();
     chatInput.placeholder = 'Broadcast to team…';
     chatTargetStatusDot.classList.remove('idle', 'busy');
-    chatHeaderStatusText.textContent = 'Channel';
+    chatTargetStatusDot.style.display = 'none';
+    chatHeaderStatusText.textContent = '';
 
     await loadChatHistory();
 }
@@ -518,11 +525,12 @@ chatInput.addEventListener('input', () => {
 
 function memberRowHtml(agent) {
     const bg = avatarColorFor(agent.id);
+    const role = roleLabelFor(agent.id);
     return `
         <button class="member-row" data-agent-id="${escapeAttr(agent.id)}">
             <div class="avatar" style="background:${bg}">${initialsFor(agent.name)}</div>
             <div class="member-row-text">
-                <div class="member-row-name">${escapeHtml(agent.name)}</div>
+                <div class="member-row-name">${escapeHtml(agent.name)}${role ? `<span class="member-row-role">${escapeHtml(role)}</span>` : ''}</div>
                 <div class="member-row-task" data-task-for="${escapeAttr(agent.id)}"></div>
             </div>
             <div class="member-row-dot" data-status-dot="${escapeAttr(agent.id)}"></div>
@@ -730,11 +738,12 @@ async function renderMemberDetails(agentId) {
     const isKit = agentId === KIT_AGENT_ID;
     const bg = avatarColorFor(agentId);
 
+    const role = roleLabelFor(agentId);
     let html = `
         <div class="details-avatar-row">
             <div class="avatar" style="width:48px;height:48px;font-size:18px;border-radius:12px;background:${bg}">${initialsFor(agent.name)}</div>
             <div>
-                <div class="details-name">${escapeHtml(agent.name)}</div>
+                <div class="details-name">${escapeHtml(agent.name)}${role ? `<span class="details-role">${escapeHtml(role)}</span>` : ''}</div>
                 <div class="details-status-line">
                     <span class="status-dot ${statusClassFor(agentId)}"></span>
                     ${escapeHtml(statusTextFor(agentId))}

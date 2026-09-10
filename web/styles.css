@@ -273,6 +273,13 @@ button, input, textarea {
     text-overflow: ellipsis;
 }
 
+.member-row-role {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-left: 6px;
+    font-weight: 400;
+}
+
 .member-row-dot {
     width: 9px;
     height: 9px;
@@ -691,6 +698,13 @@ button.chat-header-menu {
 .details-name {
     font-weight: 800;
     font-size: 17px;
+}
+
+.details-role {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    margin-left: 6px;
 }
 
 .details-status-line {
