@@ -233,6 +233,10 @@ button, input, textarea {
     flex-shrink: 0;
 }
 
+.member-row.active .avatar {
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.45);
+}
+
 .channel-avatar {
     background: #5e40be !important;
     font-weight: 800;
