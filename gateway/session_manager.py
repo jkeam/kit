@@ -347,24 +347,62 @@ class SessionManager:
         if path.exists():
             path.unlink()
 
-    def list_sessions(self) -> List[Session]:
-        """Get all active sessions."""
-        return list(self.sessions.values())
+    @staticmethod
+    def _parse_session_id(session_id: str) -> tuple[str, str, str]:
+        """Recover (platform, user_id, agent_id) from a session id built by
+        make_session_id, for sessions that only exist on disk (no live
+        in-memory Session to read these off of)."""
+        parts = session_id.split(":")
+        if len(parts) >= 3:
+            return parts[0], parts[1], parts[2]
+        if len(parts) == 2:
+            return parts[0], parts[1], KIT_AGENT_ID
+        return "unknown", session_id, KIT_AGENT_ID
+
+    def _persisted_session_ids(self) -> List[str]:
+        """Session ids with history on disk, recovered from session file
+        names (see _session_file - ':' becomes '_')."""
+        if not self.sessions_dir.exists():
+            return []
+        return [p.stem.replace("_", ":") for p in self.sessions_dir.glob("*.json")]
+
+    def list_sessions(self) -> List[Dict[str, Any]]:
+        """All sessions with any state: live in-memory ones plus
+        persisted-only ones whose history survived a restart but haven't
+        been re-activated by a new message yet."""
+        ids = set(self.sessions.keys()) | set(self._persisted_session_ids())
+        stats = (self.get_session_stats(sid) for sid in ids)
+        return [s for s in stats if s is not None]
 
     def get_session_stats(self, session_id: str) -> Optional[Dict]:
-        """Get statistics for a specific session."""
-        if session_id not in self.sessions:
+        """Get statistics for a specific session - live (in-memory) or
+        persisted-only (history on disk from before the last restart)."""
+        messages = self.get_messages(session_id)
+
+        if session_id in self.sessions:
+            session = self.sessions[session_id]
+            return {
+                "session_id": session.session_id,
+                "platform": session.platform,
+                "user_id": session.user_id,
+                "agent_id": session.agent_id,
+                "created_at": session.created_at.isoformat(),
+                "last_active": session.last_active.isoformat(),
+                "message_count": len(messages)
+            }
+
+        if not messages:
             return None
 
-        session = self.sessions[session_id]
+        platform, user_id, agent_id = self._parse_session_id(session_id)
         return {
-            "session_id": session.session_id,
-            "platform": session.platform,
-            "user_id": session.user_id,
-            "agent_id": session.agent_id,
-            "created_at": session.created_at.isoformat(),
-            "last_active": session.last_active.isoformat(),
-            "message_count": len(self.get_messages(session_id))
+            "session_id": session_id,
+            "platform": platform,
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "created_at": messages[0]["timestamp"],
+            "last_active": messages[-1]["timestamp"],
+            "message_count": len(messages)
         }
 
     def clear_session(self, session_id: str) -> bool:

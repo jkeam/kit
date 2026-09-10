@@ -282,21 +282,14 @@ async def chat(request: ChatRequest):
 
 @app.get("/sessions", response_model=List[SessionStats], dependencies=[Depends(_require_gateway_token)])
 async def list_sessions():
-    """List all active sessions."""
+    """List all sessions - live ones plus persisted-only ones whose history
+    survived a restart but hasn't been re-activated by a new message yet."""
     if not session_manager:
         raise HTTPException(status_code=500, detail="Session manager not initialized")
 
     sessions = session_manager.list_sessions()
     return [
-        SessionStats(
-            session_id=s.session_id,
-            platform=s.platform,
-            user_id=s.user_id,
-            agent_id=s.agent_id,
-            created_at=s.created_at.isoformat(),
-            last_active=s.last_active.isoformat(),
-            message_count=len(session_manager.get_messages(s.session_id))
-        )
+        SessionStats(**s)
         for s in sessions
     ]
 
