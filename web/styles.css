@@ -875,6 +875,28 @@ textarea.form-control {
     cursor: default;
 }
 
+.color-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.color-picker-row input[type="color"] {
+    width: 36px;
+    height: 36px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+}
+
+.color-picker-value {
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-family: monospace;
+}
+
 .form-status {
     font-size: 12.5px;
     align-self: center;

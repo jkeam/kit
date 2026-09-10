@@ -35,6 +35,7 @@ class AgentDefinition:
     model: Optional[str] = None
     provider: Optional[str] = None
     mcp_servers: Optional[Dict[str, dict]] = None
+    color: Optional[str] = None
 
     @property
     def allowed_tools(self) -> Optional[set]:
@@ -141,6 +142,7 @@ class AgentRegistry:
             model=meta.get("model"),
             provider=meta.get("provider"),
             mcp_servers=meta.get("mcp_servers"),
+            color=meta.get("color"),
         )
 
     def list_agents(self) -> List[AgentDefinition]:
@@ -165,6 +167,7 @@ class AgentRegistry:
         model: Optional[str] = None,
         provider: Optional[str] = None,
         mcp_servers: Optional[Dict[str, dict]] = None,
+        color: Optional[str] = None,
     ) -> AgentDefinition:
         if id == KIT_AGENT_ID:
             raise ValueError("'kit' is reserved for the built-in manager agent")
@@ -198,6 +201,8 @@ class AgentRegistry:
             meta["provider"] = provider
         if mcp:
             meta["mcp_servers"] = mcp
+        if color:
+            meta["color"] = color
         self._agent_meta_path(id).write_text(json.dumps(meta, indent=2))
 
         soul_path = self._agent_soul_path(id)
@@ -217,6 +222,7 @@ class AgentRegistry:
         model: Optional[str] = None,
         provider: Optional[str] = None,
         mcp_servers: Optional[Dict[str, dict]] = None,
+        color: Optional[str] = None,
     ) -> AgentDefinition:
         if id == KIT_AGENT_ID:
             raise ValueError("'kit' cannot be edited via update_agent - edit workspace/SOUL.md directly")
@@ -241,6 +247,8 @@ class AgentRegistry:
             meta["provider"] = provider if provider else None
         if mcp_servers is not None:
             meta["mcp_servers"] = mcp_servers if mcp_servers else None
+        if color is not None:
+            meta["color"] = color if color else None
 
         path.write_text(json.dumps(meta, indent=2))
 

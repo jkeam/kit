@@ -9,7 +9,11 @@ const PLATFORM = 'web';
 const USER_ID = 'browser';
 const KIT_AGENT_ID = 'kit';
 const KIT_AVATAR_COLOR = '#ee0000';
-const AVATAR_PALETTE = ['#ca6c0f', '#37a3a3', '#5e40be', '#63993d', '#a60000', '#147878', '#b98412', '#876fd4'];
+const AVATAR_PALETTE = [
+    '#0066cc', '#ca6c0f', '#5e40be', '#3e8635', '#c9190b', '#009596',
+    '#b98412', '#876fd4', '#a60000', '#4394e5', '#63993d', '#ec7a08',
+    '#7d1007', '#a18fff', '#f4c145', '#2b9af3',
+];
 
 // Which team member the chat panel is currently talking to. Mirrors the
 // server's make_session_id: Kit keeps the original {platform}:{user_id}
@@ -182,13 +186,16 @@ function initialsFor(name) {
 }
 
 function colorForId(id) {
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+    let hash = 5381;
+    for (let i = 0; i < id.length; i++) hash = ((hash << 5) + hash + id.charCodeAt(i)) >>> 0;
     return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
 }
 
 function avatarColorFor(agentId) {
-    return agentId === KIT_AGENT_ID ? KIT_AVATAR_COLOR : colorForId(agentId);
+    if (agentId === KIT_AGENT_ID) return KIT_AVATAR_COLOR;
+    const agent = agentsById[agentId];
+    if (agent && agent.color) return agent.color;
+    return colorForId(agentId);
 }
 
 function statusClassFor(agentId) {
@@ -1118,6 +1125,14 @@ function renderMemberEditForm(agentId) {
             <input class="form-control" id="edit-description" type="text" value="${escapeAttr(agent.description || '')}">
         </div>
         <div class="form-group">
+            <label class="form-label">Avatar color</label>
+            <div class="color-picker-row">
+                <input type="color" id="edit-color" value="${agent.color || colorForId(agentId)}">
+                <span class="color-picker-value" id="edit-color-label">${agent.color || 'auto'}</span>
+                <button class="btn btn-link btn-sm" id="edit-color-reset" type="button" ${!agent.color ? 'disabled' : ''}>Reset to auto</button>
+            </div>
+        </div>
+        <div class="form-group">
             <label class="form-label">Tools</label>
             <div id="edit-tools-cb" class="cb-group"></div>
         </div>
@@ -1151,6 +1166,23 @@ function renderMemberEditForm(agentId) {
     document.getElementById('details-cancel-edit').addEventListener('click', () => renderMemberDetails(agentId));
     document.getElementById('edit-cancel-btn').addEventListener('click', () => renderMemberDetails(agentId));
     document.getElementById('edit-save-btn').addEventListener('click', () => saveMemberEdit(agentId));
+
+    const colorInput = document.getElementById('edit-color');
+    const colorLabel = document.getElementById('edit-color-label');
+    const colorReset = document.getElementById('edit-color-reset');
+    colorInput._custom = !!agent.color;
+    colorInput.addEventListener('input', () => {
+        colorInput._custom = true;
+        colorLabel.textContent = colorInput.value;
+        colorReset.disabled = false;
+    });
+    colorReset.addEventListener('click', () => {
+        colorInput._custom = false;
+        colorInput.value = colorForId(agentId);
+        colorLabel.textContent = 'auto';
+        colorReset.disabled = true;
+    });
+
     renderCheckboxGroup('edit-tools-cb', '/tools', agent.tools);
     renderCheckboxGroup('edit-skills-cb', '/skills', agent.skills);
     renderMcpEditor('edit-mcp-servers', agent.mcp_servers);
@@ -1158,6 +1190,7 @@ function renderMemberEditForm(agentId) {
 
 async function saveMemberEdit(agentId) {
     const statusEl = document.getElementById('edit-status');
+    const colorInput = document.getElementById('edit-color');
     const payload = {
         name: document.getElementById('edit-name').value.trim(),
         description: document.getElementById('edit-description').value.trim(),
@@ -1167,6 +1200,7 @@ async function saveMemberEdit(agentId) {
         provider: document.getElementById('edit-provider').value.trim() || null,
         soul: document.getElementById('edit-soul').value,
         mcp_servers: readMcpEditor('edit-mcp-servers'),
+        color: colorInput._custom ? colorInput.value : '',
     };
 
     statusEl.textContent = 'Saving...';
@@ -1243,6 +1277,13 @@ function renderAddTeammateForm() {
             <label class="form-label">Display name (optional)</label>
             <input class="form-control" id="new-agent-name" type="text" placeholder="e.g. Tester">
         </div>
+        <div class="form-group">
+            <label class="form-label">Avatar color (optional)</label>
+            <div class="color-picker-row">
+                <input type="color" id="new-agent-color" value="#5e40be">
+                <span class="color-picker-value" id="new-agent-color-label">auto</span>
+            </div>
+        </div>
         <div class="details-actions">
             <button class="btn btn-primary" id="create-agent-button">Create teammate</button>
             <span class="form-status" id="create-agent-status"></span>
@@ -1256,6 +1297,15 @@ function renderAddTeammateForm() {
         const sel = document.getElementById('new-agent-template');
         if (sel && sel.value) renderEditTemplateForm(sel.value);
     });
+
+    const newColorInput = document.getElementById('new-agent-color');
+    const newColorLabel = document.getElementById('new-agent-color-label');
+    newColorInput._custom = false;
+    newColorInput.addEventListener('input', () => {
+        newColorInput._custom = true;
+        newColorLabel.textContent = newColorInput.value;
+    });
+
     loadAgentTemplatesForNewAgentForm(document.getElementById('new-agent-template'));
 }
 
@@ -1282,7 +1332,12 @@ async function createAgent() {
         const response = await apiFetch(`${API_BASE}/agents`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ template_id: templateId, id, name: name || undefined }),
+            body: JSON.stringify({
+                template_id: templateId,
+                id,
+                name: name || undefined,
+                color: document.getElementById('new-agent-color')._custom ? document.getElementById('new-agent-color').value : undefined,
+            }),
         });
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));

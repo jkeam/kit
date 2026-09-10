@@ -412,6 +412,7 @@ class AgentOut(BaseModel):
     provider: Optional[str] = None
     soul: str
     mcp_servers: Optional[Dict[str, Any]] = None
+    color: Optional[str] = None
 
     @staticmethod
     def from_definition(defn) -> "AgentOut":
@@ -419,7 +420,7 @@ class AgentOut(BaseModel):
             id=defn.id, name=defn.name, description=defn.description,
             template_id=defn.template_id, tools=defn.tools, skills=defn.skills,
             model=defn.model, provider=defn.provider, soul=defn.soul,
-            mcp_servers=defn.mcp_servers,
+            mcp_servers=defn.mcp_servers, color=defn.color,
         )
 
 
@@ -434,6 +435,7 @@ class CreateAgentRequest(BaseModel):
     model: Optional[str] = None
     provider: Optional[str] = None
     mcp_servers: Optional[Dict[str, Any]] = None
+    color: Optional[str] = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -445,6 +447,7 @@ class UpdateAgentRequest(BaseModel):
     model: Optional[str] = None
     provider: Optional[str] = None
     mcp_servers: Optional[Dict[str, Any]] = None
+    color: Optional[str] = None
 
 
 def _require_session_manager() -> SessionManager:
@@ -493,6 +496,7 @@ async def create_agent(request: CreateAgentRequest):
             model=request.model,
             provider=request.provider,
             mcp_servers=request.mcp_servers,
+            color=request.color,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -522,6 +526,7 @@ async def update_agent(agent_id: str, request: UpdateAgentRequest):
             model=request.model,
             provider=request.provider,
             mcp_servers=request.mcp_servers,
+            color=request.color,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
