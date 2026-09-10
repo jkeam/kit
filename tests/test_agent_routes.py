@@ -157,6 +157,40 @@ async def test_save_agent_template():
 
 
 @pytest.mark.asyncio
+async def test_save_agent_template_missing_id_returns_400():
+    with pytest.raises(HTTPException) as exc_info:
+        await server_module.save_agent_template({
+            "name": "No Id", "tools": [], "skills": [], "soul": "",
+        })
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_save_agent_template_missing_name_returns_400():
+    with pytest.raises(HTTPException) as exc_info:
+        await server_module.save_agent_template({
+            "id": "no-name", "tools": [], "skills": [], "soul": "",
+        })
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_save_agent_template_overrides_existing():
+    await server_module.save_agent_template({
+        "id": "custom-role", "name": "V1", "description": "first",
+        "tools": [], "skills": [], "soul": "",
+    })
+    await server_module.save_agent_template({
+        "id": "custom-role", "name": "V2", "description": "second",
+        "tools": ["read"], "skills": [], "soul": "# Updated",
+    })
+    templates = await server_module.list_agent_templates()
+    custom = next(t for t in templates if t["id"] == "custom-role")
+    assert custom["name"] == "V2"
+    assert custom["tools"] == ["read"]
+
+
+@pytest.mark.asyncio
 async def test_list_tools_returns_known_tool_names():
     tools = await server_module.list_tools()
     names = {t["name"] for t in tools}

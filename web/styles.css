@@ -904,6 +904,66 @@ textarea.form-control {
     color: var(--text-primary);
 }
 
+.cb-group {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.cb-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.cb-row:hover {
+    background: var(--panel-bg);
+}
+
+.cb-row-all {
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+}
+
+.cb-row input[type="checkbox"] {
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+.cb-row input[type="checkbox"]:disabled {
+    opacity: 0.4;
+}
+
+.cb-name {
+    font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-size: 12.5px;
+}
+
+.cb-items {
+    display: flex;
+    flex-direction: column;
+}
+
+.template-create-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 0 0;
+}
+
+.template-create-link:hover {
+    text-decoration: underline;
+}
+
 /* ---------- Workspace overlay (Team Activity / Schedules / Sessions) ---------- */
 
 .workspace-overlay {

@@ -651,6 +651,53 @@ function parseToolOrSkillInput(value) {
     return trimmed.split(',').map(s => s.trim()).filter(Boolean);
 }
 
+async function renderCheckboxGroup(containerId, endpoint, selected) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '<div class="spinner" style="margin:8px auto;"></div>';
+    try {
+        const response = await apiFetch(`${API_BASE}${endpoint}`);
+        if (!response.ok) throw new Error('Failed to load');
+        const items = await response.json();
+        if (items.length === 0) {
+            container.innerHTML = '<div class="empty-state" style="padding:6px 0;">None available</div>';
+            return;
+        }
+        const isWildcard = selected === '*';
+        const selectedSet = isWildcard ? null : new Set(Array.isArray(selected) ? selected : []);
+
+        let html = `<label class="cb-row cb-row-all">
+            <input type="checkbox" class="cb-all" ${isWildcard ? 'checked' : ''}> <span>All access (<code>*</code>)</span>
+        </label>`;
+        html += '<div class="cb-items">';
+        items.forEach(item => {
+            const checked = isWildcard || (selectedSet && selectedSet.has(item.name));
+            html += `<label class="cb-row" title="${escapeAttr(item.description || '')}">
+                <input type="checkbox" value="${escapeAttr(item.name)}" ${checked ? 'checked' : ''} ${isWildcard ? 'disabled' : ''}>
+                <span class="cb-name">${escapeHtml(item.name)}</span>
+            </label>`;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+
+        const allCb = container.querySelector('.cb-all');
+        const itemCbs = container.querySelectorAll('.cb-items input[type="checkbox"]');
+        allCb.addEventListener('change', () => {
+            itemCbs.forEach(cb => { cb.disabled = allCb.checked; cb.checked = allCb.checked; });
+        });
+    } catch (error) {
+        container.innerHTML = `<div class="empty-state" style="padding:6px 0;">Error: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+function readCheckboxGroup(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return [];
+    const allCb = container.querySelector('.cb-all');
+    if (allCb && allCb.checked) return '*';
+    return Array.from(container.querySelectorAll('.cb-items input[type="checkbox"]:checked')).map(cb => cb.value);
+}
+
 function updateDetailsStatusLine(agentId) {
     if (detailsMode !== 'member' || detailsAgentId !== agentId) return;
     const line = detailsBody.querySelector('.details-status-line');
@@ -914,12 +961,12 @@ function renderMemberEditForm(agentId) {
             <input class="form-control" id="edit-description" type="text" value="${escapeAttr(agent.description || '')}">
         </div>
         <div class="form-group">
-            <label class="form-label">Tools (comma-separated, or * for all)</label>
-            <input class="form-control" id="edit-tools" type="text" value="${escapeAttr(toolOrSkillListToInputValue(agent.tools))}">
+            <label class="form-label">Tools</label>
+            <div id="edit-tools-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
-            <label class="form-label">Skills (comma-separated, or * for all)</label>
-            <input class="form-control" id="edit-skills" type="text" value="${escapeAttr(toolOrSkillListToInputValue(agent.skills))}">
+            <label class="form-label">Skills</label>
+            <div id="edit-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
             <label class="form-label">Model (blank for default)</label>
@@ -943,6 +990,8 @@ function renderMemberEditForm(agentId) {
     document.getElementById('details-cancel-edit').addEventListener('click', () => renderMemberDetails(agentId));
     document.getElementById('edit-cancel-btn').addEventListener('click', () => renderMemberDetails(agentId));
     document.getElementById('edit-save-btn').addEventListener('click', () => saveMemberEdit(agentId));
+    renderCheckboxGroup('edit-tools-cb', '/tools', agent.tools);
+    renderCheckboxGroup('edit-skills-cb', '/skills', agent.skills);
 }
 
 async function saveMemberEdit(agentId) {
@@ -950,8 +999,8 @@ async function saveMemberEdit(agentId) {
     const payload = {
         name: document.getElementById('edit-name').value.trim(),
         description: document.getElementById('edit-description').value.trim(),
-        tools: parseToolOrSkillInput(document.getElementById('edit-tools').value),
-        skills: parseToolOrSkillInput(document.getElementById('edit-skills').value),
+        tools: readCheckboxGroup('edit-tools-cb'),
+        skills: readCheckboxGroup('edit-skills-cb'),
         model: document.getElementById('edit-model').value.trim() || null,
         provider: document.getElementById('edit-provider').value.trim() || null,
         soul: document.getElementById('edit-soul').value,
@@ -1018,6 +1067,7 @@ function renderAddTeammateForm() {
         <div class="form-group">
             <label class="form-label">Template</label>
             <select class="form-control" id="new-agent-template"></select>
+            <button class="template-create-link" id="create-template-link"><i class="fas fa-plus"></i> New template</button>
         </div>
         <div class="form-group">
             <label class="form-label">Id <span style="font-weight:normal;color:var(--pf-v5-global--Color--200)">(cannot be changed later)</span></label>
@@ -1035,6 +1085,7 @@ function renderAddTeammateForm() {
 
     document.getElementById('details-cancel-new').addEventListener('click', () => renderMemberDetails(currentAgentId));
     document.getElementById('create-agent-button').addEventListener('click', createAgent);
+    document.getElementById('create-template-link').addEventListener('click', renderCreateTemplateForm);
     loadAgentTemplatesForNewAgentForm(document.getElementById('new-agent-template'));
 }
 
@@ -1072,6 +1123,100 @@ async function createAgent() {
         statusEl.className = 'form-status success';
         await loadAgents();
         renderMemberDetails(created.id);
+    } catch (error) {
+        statusEl.textContent = `Error: ${error.message}`;
+        statusEl.className = 'form-status error';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function renderCreateTemplateForm() {
+    detailsMode = 'new-template';
+    detailsTitle.textContent = 'New template';
+
+    detailsBody.innerHTML = `
+        <button class="details-back-link" id="template-back-btn"><i class="fas fa-arrow-left"></i> Back to Add teammate</button>
+        <div class="form-group">
+            <label class="form-label">Id <span style="font-weight:normal;color:var(--pf-v5-global--Color--200)">(unique slug, cannot be changed later)</span></label>
+            <input class="form-control" id="tpl-id" type="text" placeholder="e.g. data-analyst">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Name</label>
+            <input class="form-control" id="tpl-name" type="text" placeholder="e.g. Data Analyst">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Description</label>
+            <input class="form-control" id="tpl-description" type="text" placeholder="Short description of the role">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Tools</label>
+            <div id="tpl-tools-cb" class="cb-group"></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Skills</label>
+            <div id="tpl-skills-cb" class="cb-group"></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Soul (persona)</label>
+            <textarea class="form-control" id="tpl-soul" rows="10" placeholder="# Role Name\n\nYou are a ... on Kit's team."></textarea>
+        </div>
+        <div class="details-actions">
+            <button class="btn btn-primary" id="save-template-btn">Create template</button>
+            <button class="btn btn-secondary" id="template-cancel-btn">Cancel</button>
+            <span class="form-status" id="template-status"></span>
+        </div>
+    `;
+
+    document.getElementById('template-back-btn').addEventListener('click', renderAddTeammateForm);
+    document.getElementById('template-cancel-btn').addEventListener('click', renderAddTeammateForm);
+    document.getElementById('save-template-btn').addEventListener('click', createTemplate);
+    renderCheckboxGroup('tpl-tools-cb', '/tools', ['read', 'list_files', 'exec_shell']);
+    renderCheckboxGroup('tpl-skills-cb', '/skills', '*');
+}
+
+async function createTemplate() {
+    const statusEl = document.getElementById('template-status');
+    const btn = document.getElementById('save-template-btn');
+
+    const id = document.getElementById('tpl-id').value.trim();
+    const name = document.getElementById('tpl-name').value.trim();
+    if (!id) {
+        statusEl.textContent = 'Id is required';
+        statusEl.className = 'form-status error';
+        return;
+    }
+    if (!name) {
+        statusEl.textContent = 'Name is required';
+        statusEl.className = 'form-status error';
+        return;
+    }
+
+    const template = {
+        id,
+        name,
+        description: document.getElementById('tpl-description').value.trim(),
+        tools: readCheckboxGroup('tpl-tools-cb'),
+        skills: readCheckboxGroup('tpl-skills-cb'),
+        soul: document.getElementById('tpl-soul').value,
+    };
+
+    btn.disabled = true;
+    statusEl.textContent = 'Creating...';
+    statusEl.className = 'form-status';
+    try {
+        const response = await apiFetch(`${API_BASE}/agent-templates`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(template),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        statusEl.textContent = 'Created';
+        statusEl.className = 'form-status success';
+        setTimeout(renderAddTeammateForm, 600);
     } catch (error) {
         statusEl.textContent = `Error: ${error.message}`;
         statusEl.className = 'form-status error';

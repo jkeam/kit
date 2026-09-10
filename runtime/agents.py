@@ -88,8 +88,10 @@ class AgentRegistry:
 
     def save_template(self, template: dict) -> dict:
         """Save a user-defined template (creates or overrides by id)."""
-        if "id" not in template:
+        if not template.get("id"):
             raise ValueError("Template requires an 'id'")
+        if not template.get("name"):
+            raise ValueError("Template requires a 'name'")
         path = self.agent_templates_dir / f"{template['id']}.json"
         path.write_text(json.dumps(template, indent=2))
         return template
