@@ -11,242 +11,174 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
-    <!-- PatternFly CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/@patternfly/patternfly@5/patternfly.css">
-    <link rel="stylesheet" href="https://unpkg.com/@patternfly/patternfly@5/patternfly-addons.css">
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 
     <!-- Custom CSS -->
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Page Header -->
-    <div class="pf-v5-c-page">
-        <header class="pf-v5-c-masthead">
-            <div class="pf-v5-c-masthead__main">
-                <div class="pf-v5-c-masthead__brand">
-                    <a class="pf-v5-c-masthead__brand-link brand-link" href="#">
-                        <span class="brand-mark">K</span>
-                        <span class="brand-wordmark">Kit</span>
-                    </a>
-                </div>
+    <div class="app" id="app">
+        <!-- Icon rail: workspace-wide sections, not tied to any one team member -->
+        <nav class="icon-rail" aria-label="Workspace sections">
+            <div class="rail-brand" title="Kit">K</div>
+
+            <button class="rail-btn" data-panel="activity" title="Team Activity" aria-label="Team Activity">
+                <i class="fas fa-bolt"></i>
+            </button>
+            <button class="rail-btn" data-panel="memory" title="Memory" aria-label="Memory">
+                <i class="fas fa-brain"></i>
+            </button>
+            <button class="rail-btn" data-panel="tools" title="Tools" aria-label="Tools">
+                <i class="fas fa-toolbox"></i>
+            </button>
+            <button class="rail-btn" data-panel="schedules" title="Schedules" aria-label="Schedules">
+                <i class="fas fa-clock"></i>
+            </button>
+            <button class="rail-btn" data-panel="skills" title="Skills" aria-label="Skills">
+                <i class="fas fa-puzzle-piece"></i>
+            </button>
+            <button class="rail-btn" data-panel="sessions" title="Sessions" aria-label="Sessions">
+                <i class="fas fa-layer-group"></i>
+            </button>
+
+            <div class="rail-spacer"></div>
+
+            <div class="rail-status" id="connection-status" title="Disconnected">
+                <span class="rail-status-dot"></span>
             </div>
-            <div class="pf-v5-c-masthead__content">
-                <div class="pf-v5-l-flex pf-m-align-items-center pf-m-gap-md">
-                    <div class="pf-v5-l-flex__item">
-                        <span id="connection-status" class="pf-v5-c-label pf-m-red">
-                            <span class="pf-v5-c-label__content">
-                                <span class="pf-v5-c-label__icon">
-                                    <i class="fas fa-circle"></i>
-                                </span>
-                                <span id="connection-text">Disconnected</span>
-                            </span>
-                        </span>
-                    </div>
-                    <div class="pf-v5-l-flex__item">
-                        <button id="toggle-info-panel" class="pf-v5-c-button pf-m-plain" type="button" title="Show/hide agent info panel" aria-expanded="true">
-                            <i class="fas fa-sliders-h"></i>
-                        </button>
-                    </div>
-                </div>
+        </nav>
+
+        <!-- Member sidebar: contacts-style list of team members -->
+        <aside class="member-sidebar" id="member-sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title">Kit</div>
+                <div class="sidebar-subtitle">Your AI team</div>
             </div>
-        </header>
+            <div class="member-list" id="member-list">
+                <div class="member-list-loading">Loading team&hellip;</div>
+            </div>
+            <button class="add-teammate-btn" id="add-teammate-btn">
+                <i class="fas fa-plus"></i> Add teammate
+            </button>
+        </aside>
+        <div class="sidebar-scrim" id="sidebar-scrim"></div>
 
-        <div class="pf-v5-c-page__main">
-            <section class="pf-v5-c-page__main-section">
-                <div class="pf-v5-l-grid pf-m-gutter">
-                    <!-- Chat Panel (Left) -->
-                    <div id="chat-panel-col" class="pf-v5-l-grid__item pf-m-6-col">
-                        <div class="pf-v5-c-card">
-                            <div class="pf-v5-c-card__header">
-                                <div class="pf-v5-c-card__header-main">
-                                    <div class="agent-status-dot" id="chat-target-status-dot" title="Idle"></div>
-                                    <select id="chat-agent-select" class="pf-v5-c-form-control agent-select" title="Who you're talking to">
-                                        <option value="kit">Kit (Manager)</option>
-                                    </select>
-                                </div>
-                                <div class="pf-v5-c-card__actions">
-                                    <span class="pf-v5-c-label pf-m-blue">
-                                        <span class="pf-v5-c-label__content">
-                                            <span id="session-id">web:browser</span>
-                                        </span>
-                                    </span>
-                                    <span class="pf-v5-c-label pf-m-outline" style="margin-left: 8px;">
-                                        <span class="pf-v5-c-label__content">
-                                            <span id="message-count">0 messages</span>
-                                        </span>
-                                    </span>
-                                    <button id="clear-chat-button" class="pf-v5-c-button pf-m-secondary pf-m-small" style="margin-left: 8px;" title="Clear this chat session">
-                                        Clear Chat
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="pf-v5-c-card__body chat-card-body">
-                                <div id="chat-messages" class="chat-messages"></div>
-                            </div>
-                            <div class="pf-v5-c-card__footer">
-                                <div class="pf-v5-c-input-group">
-                                    <textarea
-                                        id="chat-input"
-                                        class="pf-v5-c-form-control"
-                                        placeholder="Type your message..."
-                                        rows="2"
-                                    ></textarea>
-                                    <button id="send-button" class="pf-v5-c-button pf-m-primary">
-                                        Send
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Info Panel (Right) -->
-                    <div id="info-panel-col" class="pf-v5-l-grid__item pf-m-6-col">
-                        <div class="pf-v5-c-card">
-                            <div class="pf-v5-c-card__header">
-                                <div class="pf-v5-c-tabs pf-m-box" id="info-tabs">
-                                    <ul class="pf-v5-c-tabs__list">
-                                        <li class="pf-v5-c-tabs__item pf-m-current">
-                                            <button class="pf-v5-c-tabs__link" data-tab="sessions">
-                                                <span class="pf-v5-c-tabs__item-text">Sessions</span>
-                                            </button>
-                                        </li>
-                                        <li class="pf-v5-c-tabs__item">
-                                            <button class="pf-v5-c-tabs__link" data-tab="agents">
-                                                <span class="pf-v5-c-tabs__item-text">Agents</span>
-                                            </button>
-                                        </li>
-                                        <li class="pf-v5-c-tabs__item">
-                                            <button class="pf-v5-c-tabs__link" data-tab="activity">
-                                                <span class="pf-v5-c-tabs__item-text">Team Activity</span>
-                                            </button>
-                                        </li>
-                                        <li class="pf-v5-c-tabs__item">
-                                            <button class="pf-v5-c-tabs__link" data-tab="memory">
-                                                <span class="pf-v5-c-tabs__item-text">Memory</span>
-                                            </button>
-                                        </li>
-                                        <li class="pf-v5-c-tabs__item">
-                                            <button class="pf-v5-c-tabs__link" data-tab="tools">
-                                                <span class="pf-v5-c-tabs__item-text">Tools</span>
-                                            </button>
-                                        </li>
-                                        <li class="pf-v5-c-tabs__item">
-                                            <button class="pf-v5-c-tabs__link" data-tab="schedules">
-                                                <span class="pf-v5-c-tabs__item-text">Schedules</span>
-                                            </button>
-                                        </li>
-                                        <li class="pf-v5-c-tabs__item">
-                                            <button class="pf-v5-c-tabs__link" data-tab="skills">
-                                                <span class="pf-v5-c-tabs__item-text">Skills</span>
-                                            </button>
-                                        </li>
-                                        <li class="pf-v5-c-tabs__item">
-                                            <button class="pf-v5-c-tabs__link" data-tab="persona">
-                                                <span class="pf-v5-c-tabs__item-text">Persona</span>
-                                            </button>
-                                        </li>
-                                    </ul>
-                                </div>
-                            </div>
-                            <div class="pf-v5-c-card__body info-card-body">
-                                <!-- Sessions Tab -->
-                                <div id="sessions-tab" class="tab-content pf-m-current">
-                                    <div id="sessions-list"></div>
-                                </div>
-
-                                <!-- Agents Tab -->
-                                <div id="agents-tab" class="tab-content">
-                                    <div id="agents-list"></div>
-                                    <div class="pf-v5-c-card agent-new-card">
-                                        <div class="pf-v5-c-card__title">Add a team member</div>
-                                        <div class="pf-v5-c-card__body">
-                                            <div class="pf-v5-c-form">
-                                                <div class="pf-v5-c-form__group">
-                                                    <label class="pf-v5-c-form__label" for="new-agent-template">Template</label>
-                                                    <select id="new-agent-template" class="pf-v5-c-form-control"></select>
-                                                </div>
-                                                <div class="pf-v5-c-form__group">
-                                                    <label class="pf-v5-c-form__label" for="new-agent-id">Id</label>
-                                                    <input id="new-agent-id" class="pf-v5-c-form-control" type="text" placeholder="e.g. tester-1">
-                                                </div>
-                                                <div class="pf-v5-c-form__group">
-                                                    <label class="pf-v5-c-form__label" for="new-agent-name">Display name (optional)</label>
-                                                    <input id="new-agent-name" class="pf-v5-c-form-control" type="text" placeholder="e.g. Tester">
-                                                </div>
-                                                <button id="create-agent-button" class="pf-v5-c-button pf-m-primary">Create agent</button>
-                                                <span id="create-agent-status" class="agent-form-status"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Team Activity Tab -->
-                                <div id="activity-tab" class="tab-content">
-                                    <button id="refresh-activity" class="pf-v5-c-button pf-m-secondary" style="margin-bottom: 1rem;">
-                                        Refresh
-                                    </button>
-                                    <div id="activity-list"></div>
-                                </div>
-
-                                <!-- Memory Tab -->
-                                <div id="memory-tab" class="tab-content">
-                                    <div class="pf-v5-c-input-group" style="margin-bottom: 1rem;">
-                                        <input
-                                            id="memory-search-input"
-                                            class="pf-v5-c-form-control"
-                                            type="text"
-                                            placeholder="Search memories..."
-                                        >
-                                        <button id="memory-search-btn" class="pf-v5-c-button pf-m-primary">
-                                            Search
-                                        </button>
-                                    </div>
-                                    <div id="memory-results"></div>
-                                </div>
-
-                                <!-- Tools Tab -->
-                                <div id="tools-tab" class="tab-content">
-                                    <p class="tab-hint">Kit's full tool registry. Each agent is scoped to a subset of these (see the Agents tab).</p>
-                                    <div id="tools-list" class="pf-v5-c-description-list"></div>
-                                </div>
-
-                                <!-- Schedules Tab -->
-                                <div id="schedules-tab" class="tab-content">
-                                    <button id="refresh-schedules" class="pf-v5-c-button pf-m-secondary" style="margin-bottom: 1rem;">
-                                        Refresh
-                                    </button>
-                                    <div id="schedules-list"></div>
-                                </div>
-
-                                <!-- Skills Tab -->
-                                <div id="skills-tab" class="tab-content">
-                                    <button id="refresh-skills" class="pf-v5-c-button pf-m-secondary" style="margin-bottom: 1rem;">
-                                        Refresh
-                                    </button>
-                                    <div id="skills-list"></div>
-                                </div>
-
-                                <!-- Persona Tab -->
-                                <div id="persona-tab" class="tab-content">
-                                    <p style="margin-bottom: 0.75rem; font-size: 13px; color: var(--pf-v5-global--Color--200);">
-                                        Edit SOUL.md to define Kit's personality, behavior, and communication style. Changes take effect on the next message.
-                                    </p>
-                                    <textarea
-                                        id="persona-editor"
-                                        class="pf-v5-c-form-control persona-editor"
-                                        rows="18"
-                                        placeholder="Loading..."
-                                    ></textarea>
-                                    <div style="margin-top: 0.75rem; display: flex; gap: 8px;">
-                                        <button id="save-persona" class="pf-v5-c-button pf-m-primary">Save</button>
-                                        <span id="persona-status" style="font-size: 13px; color: var(--pf-v5-global--success-color--100); align-self: center;"></span>
-                                    </div>
-                                </div>
-                            </div>
+        <!-- Chat -->
+        <main class="chat-main">
+            <header class="chat-header">
+                <button class="icon-action-btn chat-header-menu" id="mobile-menu-btn" title="Team" aria-label="Show team list">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <div class="chat-header-who">
+                    <div class="avatar" id="chat-avatar">K</div>
+                    <div class="chat-header-text">
+                        <div class="chat-header-name" id="chat-header-name">Kit</div>
+                        <div class="chat-header-status">
+                            <span class="status-dot" id="chat-target-status-dot"></span>
+                            <span id="chat-header-status-text">Manager</span>
                         </div>
                     </div>
                 </div>
-            </section>
+                <div class="chat-header-actions">
+                    <span class="pill" id="message-count">0 messages</span>
+                    <button class="icon-action-btn" id="clear-chat-button" title="Clear this chat session" aria-label="Clear chat">
+                        <i class="fas fa-broom"></i>
+                    </button>
+                    <button class="icon-action-btn" id="toggle-details-btn" title="Show/hide details" aria-expanded="true" aria-label="Toggle details panel">
+                        <i class="fas fa-circle-info"></i>
+                    </button>
+                </div>
+            </header>
+
+            <div id="chat-messages" class="chat-messages"></div>
+
+            <footer class="chat-composer">
+                <textarea
+                    id="chat-input"
+                    class="composer-input"
+                    placeholder="Message Kit&hellip;"
+                    rows="1"
+                ></textarea>
+                <button id="send-button" class="composer-send" title="Send" aria-label="Send message">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </footer>
+        </main>
+
+        <!-- Details panel: info for whichever team member is currently open -->
+        <aside class="details-panel" id="details-panel">
+            <div class="details-panel-header">
+                <span id="details-panel-title">Details</span>
+                <button class="icon-action-btn" id="close-details-btn" title="Close" aria-label="Close details panel">
+                    <i class="fas fa-xmark"></i>
+                </button>
+            </div>
+            <div class="details-panel-body" id="details-panel-body"></div>
+        </aside>
+    </div>
+
+    <!-- Workspace overlay: Team Activity / Memory / Tools / Schedules / Skills / Sessions -->
+    <div class="workspace-overlay" id="workspace-overlay" hidden>
+        <div class="workspace-modal">
+            <div class="workspace-modal-header">
+                <div class="workspace-tabs" id="workspace-tabs">
+                    <button class="workspace-tab" data-tab="activity">
+                        <i class="fas fa-bolt"></i> Team Activity
+                    </button>
+                    <button class="workspace-tab" data-tab="memory">
+                        <i class="fas fa-brain"></i> Memory
+                    </button>
+                    <button class="workspace-tab" data-tab="tools">
+                        <i class="fas fa-toolbox"></i> Tools
+                    </button>
+                    <button class="workspace-tab" data-tab="schedules">
+                        <i class="fas fa-clock"></i> Schedules
+                    </button>
+                    <button class="workspace-tab" data-tab="skills">
+                        <i class="fas fa-puzzle-piece"></i> Skills
+                    </button>
+                    <button class="workspace-tab" data-tab="sessions">
+                        <i class="fas fa-layer-group"></i> Sessions
+                    </button>
+                </div>
+                <button class="icon-action-btn" id="close-workspace-btn" title="Close" aria-label="Close">
+                    <i class="fas fa-xmark"></i>
+                </button>
+            </div>
+            <div class="workspace-modal-body">
+                <div id="activity-tab" class="tab-content">
+                    <button id="refresh-activity" class="btn btn-secondary">Refresh</button>
+                    <div id="activity-list"></div>
+                </div>
+
+                <div id="memory-tab" class="tab-content">
+                    <div class="composer-row">
+                        <input id="memory-search-input" type="text" placeholder="Search memories...">
+                        <button id="memory-search-btn" class="btn btn-primary">Search</button>
+                    </div>
+                    <div id="memory-results"></div>
+                </div>
+
+                <div id="tools-tab" class="tab-content">
+                    <p class="tab-hint">Kit's full tool registry. Each team member is scoped to a subset of these (see their details panel).</p>
+                    <div id="tools-list" class="tools-list"></div>
+                </div>
+
+                <div id="schedules-tab" class="tab-content">
+                    <button id="refresh-schedules" class="btn btn-secondary">Refresh</button>
+                    <div id="schedules-list"></div>
+                </div>
+
+                <div id="skills-tab" class="tab-content">
+                    <button id="refresh-skills" class="btn btn-secondary">Refresh</button>
+                    <div id="skills-list"></div>
+                </div>
+
+                <div id="sessions-tab" class="tab-content">
+                    <div id="sessions-list"></div>
+                </div>
+            </div>
         </div>
     </div>
 

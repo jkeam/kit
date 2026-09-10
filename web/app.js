@@ -8,6 +8,8 @@ const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${wi
 const PLATFORM = 'web';
 const USER_ID = 'browser';
 const KIT_AGENT_ID = 'kit';
+const KIT_AVATAR_COLOR = '#611f69';
+const AVATAR_PALETTE = ['#e07b39', '#2b7a58', '#1164a3', '#8b3a9e', '#c0392b', '#0f8b8d', '#b8860b', '#5b6ee1'];
 
 // Which team member the chat panel is currently talking to. Mirrors the
 // server's make_session_id: Kit keeps the original {platform}:{user_id}
@@ -62,15 +64,12 @@ let streamingText = '';
 
 // DOM Elements
 const chatMessages = document.getElementById('chat-messages');
-const chatScrollContainer = chatMessages.closest('.chat-card-body') || chatMessages;
+const chatScrollContainer = chatMessages;
 const chatInput = document.getElementById('chat-input');
 const sendButton = document.getElementById('send-button');
 const clearChatButton = document.getElementById('clear-chat-button');
 const connectionStatus = document.getElementById('connection-status');
-const connectionText = document.getElementById('connection-text');
 const messageCountSpan = document.getElementById('message-count');
-const sessionIdSpan = document.getElementById('session-id');
-const sessionsList = document.getElementById('sessions-list');
 const memorySearchInput = document.getElementById('memory-search-input');
 const memorySearchBtn = document.getElementById('memory-search-btn');
 const memoryResults = document.getElementById('memory-results');
@@ -78,102 +77,164 @@ const refreshSchedulesBtn = document.getElementById('refresh-schedules');
 const schedulesList = document.getElementById('schedules-list');
 const refreshSkillsBtn = document.getElementById('refresh-skills');
 const skillsList = document.getElementById('skills-list');
-const personaEditor = document.getElementById('persona-editor');
-const savePersonaBtn = document.getElementById('save-persona');
-const personaStatus = document.getElementById('persona-status');
-const toggleInfoPanelBtn = document.getElementById('toggle-info-panel');
-const chatPanelCol = document.getElementById('chat-panel-col');
-const infoPanelCol = document.getElementById('info-panel-col');
-const chatAgentSelect = document.getElementById('chat-agent-select');
-const chatTargetStatusDot = document.getElementById('chat-target-status-dot');
-const agentsList = document.getElementById('agents-list');
-const newAgentTemplateSelect = document.getElementById('new-agent-template');
-const newAgentIdInput = document.getElementById('new-agent-id');
-const newAgentNameInput = document.getElementById('new-agent-name');
-const createAgentButton = document.getElementById('create-agent-button');
-const createAgentStatus = document.getElementById('create-agent-status');
 const toolsList = document.getElementById('tools-list');
+const sessionsList = document.getElementById('sessions-list');
 const refreshActivityBtn = document.getElementById('refresh-activity');
 const activityList = document.getElementById('activity-list');
+
+const chatAvatar = document.getElementById('chat-avatar');
+const chatHeaderName = document.getElementById('chat-header-name');
+const chatHeaderStatusText = document.getElementById('chat-header-status-text');
+const chatTargetStatusDot = document.getElementById('chat-target-status-dot');
+
+const memberSidebar = document.getElementById('member-sidebar');
+const memberList = document.getElementById('member-list');
+const addTeammateBtn = document.getElementById('add-teammate-btn');
+const sidebarScrim = document.getElementById('sidebar-scrim');
+const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+
+const detailsPanelEl = document.getElementById('details-panel');
+const detailsTitle = document.getElementById('details-panel-title');
+const detailsBody = document.getElementById('details-panel-body');
+const toggleDetailsBtn = document.getElementById('toggle-details-btn');
+const closeDetailsBtn = document.getElementById('close-details-btn');
+
+const workspaceOverlay = document.getElementById('workspace-overlay');
+const closeWorkspaceBtn = document.getElementById('close-workspace-btn');
 
 // Latest known status per agent_id ({status, current_task, updated_at}),
 // seeded from GET /agents/status and kept live via `agent_status` WS events.
 let agentStatuses = {};
 
-// Info panel visibility (tools/sessions/memory/schedules/skills/persona).
-// The human user doesn't always need to see what the agent has access to,
-// so it can be tucked away; state persists per-browser via localStorage.
-const INFO_PANEL_HIDDEN_KEY = 'kit_info_panel_hidden';
+// Full roster, refreshed via loadAgents() - powers the member sidebar and
+// the details panel.
+let agentsCache = [];
+let agentsById = {};
 
-function setInfoPanelHidden(hidden) {
-    infoPanelCol.hidden = hidden;
-    chatPanelCol.classList.toggle('pf-m-6-col', !hidden);
-    chatPanelCol.classList.toggle('pf-m-12-col', hidden);
-    toggleInfoPanelBtn.setAttribute('aria-expanded', String(!hidden));
-    toggleInfoPanelBtn.classList.toggle('pf-m-active', !hidden);
-    try {
-        localStorage.setItem(INFO_PANEL_HIDDEN_KEY, hidden ? '1' : '0');
-    } catch (error) {
-        // localStorage unavailable - just won't persist across reloads.
+// Details panel: 'member' shows a team member's info, 'edit' shows the
+// edit-in-place form for a non-Kit agent, 'new' shows the add-teammate form.
+let detailsMode = 'member';
+let detailsAgentId = null;
+
+let currentWorkspaceTab = null;
+
+function escapeHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeAttr(str) {
+    return escapeHtml(str).replace(/"/g, '&quot;');
+}
+
+function initialsFor(name) {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function colorForId(id) {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+    return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
+
+function avatarColorFor(agentId) {
+    return agentId === KIT_AGENT_ID ? KIT_AVATAR_COLOR : colorForId(agentId);
+}
+
+function statusClassFor(agentId) {
+    const status = agentStatuses[agentId];
+    if (!status) return '';
+    return status.status === 'busy' ? 'busy' : 'idle';
+}
+
+function statusTextFor(agentId) {
+    const status = agentStatuses[agentId];
+    if (status && status.status === 'busy') {
+        return status.current_task ? `Busy — ${status.current_task}` : 'Busy';
+    }
+    return agentId === KIT_AGENT_ID ? 'Manager' : 'Available';
+}
+
+// Info/details panel visibility persists per-browser via localStorage.
+const DETAILS_HIDDEN_KEY = 'kit_details_panel_hidden';
+
+function showDetailsPanel() {
+    detailsPanelEl.hidden = false;
+    toggleDetailsBtn.classList.add('active');
+    toggleDetailsBtn.setAttribute('aria-expanded', 'true');
+    try { localStorage.setItem(DETAILS_HIDDEN_KEY, '0'); } catch (error) {
+        // ignore
     }
 }
 
-let infoPanelHidden = false;
+function hideDetailsPanel() {
+    detailsPanelEl.hidden = true;
+    toggleDetailsBtn.classList.remove('active');
+    toggleDetailsBtn.setAttribute('aria-expanded', 'false');
+    try { localStorage.setItem(DETAILS_HIDDEN_KEY, '1'); } catch (error) {
+        // ignore
+    }
+}
+
+let detailsHidden = false;
 try {
-    infoPanelHidden = localStorage.getItem(INFO_PANEL_HIDDEN_KEY) === '1';
+    detailsHidden = localStorage.getItem(DETAILS_HIDDEN_KEY) === '1';
 } catch (error) {
     // ignore
 }
-setInfoPanelHidden(infoPanelHidden);
+// On narrow screens the details panel becomes a full-screen overlay (it
+// would otherwise hide the chat, including the hamburger button used to
+// get back to it) - always start closed there regardless of the persisted
+// desktop preference.
+if (window.matchMedia && window.matchMedia('(max-width: 760px)').matches) {
+    detailsHidden = true;
+}
+if (detailsHidden) hideDetailsPanel(); else showDetailsPanel();
 
-toggleInfoPanelBtn.addEventListener('click', () => {
-    setInfoPanelHidden(!infoPanelCol.hidden);
+toggleDetailsBtn.addEventListener('click', () => {
+    if (detailsPanelEl.hidden) {
+        showDetailsPanel();
+        renderMemberDetails(currentAgentId);
+    } else {
+        hideDetailsPanel();
+    }
 });
+closeDetailsBtn.addEventListener('click', hideDetailsPanel);
 
-// Tab switching
-document.querySelectorAll('.pf-v5-c-tabs__link').forEach(btn => {
-    btn.addEventListener('click', () => {
-        const tabName = btn.dataset.tab;
+// Mobile: the member sidebar becomes a slide-in drawer.
+function openMobileSidebar() {
+    memberSidebar.classList.add('open');
+    sidebarScrim.classList.add('visible');
+}
 
-        // Update tab items
-        document.querySelectorAll('.pf-v5-c-tabs__item').forEach(item => {
-            item.classList.remove('pf-m-current');
-        });
-        btn.closest('.pf-v5-c-tabs__item').classList.add('pf-m-current');
+function closeMobileSidebar() {
+    memberSidebar.classList.remove('open');
+    sidebarScrim.classList.remove('visible');
+}
 
-        // Update tab content
-        document.querySelectorAll('.tab-content').forEach(t => {
-            t.classList.remove('pf-m-current');
-        });
-        document.getElementById(`${tabName}-tab`).classList.add('pf-m-current');
-
-        // Load data if needed
-        if (tabName === 'sessions') loadSessions();
-        if (tabName === 'agents') loadAgents();
-        if (tabName === 'activity') loadActivity();
-        if (tabName === 'tools') loadTools();
-        if (tabName === 'schedules') loadSchedules();
-        if (tabName === 'skills') loadSkills();
-        if (tabName === 'persona') loadPersona();
-    });
+mobileMenuBtn.addEventListener('click', () => {
+    if (memberSidebar.classList.contains('open')) closeMobileSidebar();
+    else openMobileSidebar();
 });
+sidebarScrim.addEventListener('click', closeMobileSidebar);
 
 // Check connection
 async function checkConnection() {
     try {
         const response = await apiFetch(`${API_BASE}/health`);
         if (response.ok) {
-            connectionStatus.classList.remove('pf-m-red');
-            connectionStatus.classList.add('pf-m-green');
-            connectionText.textContent = 'Connected';
+            connectionStatus.classList.add('connected');
+            connectionStatus.title = 'Connected';
             return true;
         }
     } catch (error) {
-        connectionStatus.classList.remove('pf-m-green');
-        connectionStatus.classList.add('pf-m-red');
-        connectionText.textContent = 'Disconnected';
-        return false;
+        // fall through
     }
+    connectionStatus.classList.remove('connected');
+    connectionStatus.title = 'Disconnected';
+    return false;
 }
 
 function scrollChatToBottom() {
@@ -189,23 +250,57 @@ function addMessage(content, role = 'user', id = null, sender = null) {
     messageDiv.className = `message ${role}${sender ? ' delegated' : ''}`;
     if (id) messageDiv.id = id;
 
+    if (role === 'system') {
+        messageDiv.textContent = content;
+        chatMessages.appendChild(messageDiv);
+        scrollChatToBottom();
+        return messageDiv;
+    }
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+
+    const body = document.createElement('div');
+    body.className = 'message-body';
+
     if (sender) {
         const senderDiv = document.createElement('div');
         senderDiv.className = 'message-sender-label';
         senderDiv.textContent = `🤖 ${sender} asked:`;
-        messageDiv.appendChild(senderDiv);
+        body.appendChild(senderDiv);
     }
+
+    const headerLine = document.createElement('div');
+    headerLine.className = 'message-header-line';
+    const authorSpan = document.createElement('span');
+    authorSpan.className = 'message-author';
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'message-time';
+    timeSpan.textContent = new Date().toLocaleTimeString();
+
+    if (role === 'user') {
+        avatar.textContent = 'Y';
+        authorSpan.textContent = 'You';
+    } else {
+        const agent = agentsById[currentAgentId];
+        const name = agent ? agent.name : (currentAgentId === KIT_AGENT_ID ? 'Kit' : currentAgentId);
+        avatar.textContent = initialsFor(name);
+        avatar.style.background = avatarColorFor(currentAgentId);
+        authorSpan.textContent = name;
+    }
+
+    headerLine.appendChild(authorSpan);
+    headerLine.appendChild(timeSpan);
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
     contentDiv.textContent = content;
 
-    const timeDiv = document.createElement('div');
-    timeDiv.className = 'message-time';
-    timeDiv.textContent = new Date().toLocaleTimeString();
+    body.appendChild(headerLine);
+    body.appendChild(contentDiv);
 
-    messageDiv.appendChild(contentDiv);
-    messageDiv.appendChild(timeDiv);
+    messageDiv.appendChild(avatar);
+    messageDiv.appendChild(body);
 
     chatMessages.appendChild(messageDiv);
     scrollChatToBottom();
@@ -215,17 +310,16 @@ function addMessage(content, role = 'user', id = null, sender = null) {
 
 // Add thinking indicator
 function addThinkingIndicator() {
+    const agent = agentsById[currentAgentId];
+    const name = agent ? agent.name : (currentAgentId === KIT_AGENT_ID ? 'Kit' : currentAgentId);
     const thinkingDiv = document.createElement('div');
     thinkingDiv.id = 'thinking-indicator';
     thinkingDiv.className = 'message assistant';
     thinkingDiv.innerHTML = `
-        <div class="message-content">
-            <div class="pf-v5-c-spinner pf-m-md" role="progressbar">
-                <span class="pf-v5-c-spinner__clipper"></span>
-                <span class="pf-v5-c-spinner__lead-ball"></span>
-                <span class="pf-v5-c-spinner__tail-ball"></span>
-            </div>
-            <span style="margin-left: 12px;">Thinking...</span>
+        <div class="avatar" style="background:${avatarColorFor(currentAgentId)}">${initialsFor(name)}</div>
+        <div class="message-body">
+            <div class="message-header-line"><span class="message-author">${escapeHtml(name)}</span></div>
+            <div class="message-content"><div class="spinner" style="margin:2px 0 0;width:16px;height:16px;border-width:2px;"></div></div>
         </div>
     `;
     chatMessages.appendChild(thinkingDiv);
@@ -247,10 +341,10 @@ async function sendMessage() {
 
     chatInput.disabled = true;
     sendButton.disabled = true;
-    sendButton.textContent = 'Sending...';
 
     addMessage(message, 'user');
     chatInput.value = '';
+    chatInput.style.height = 'auto';
 
     if (ws && ws.readyState === WebSocket.OPEN) {
         addThinkingIndicator();
@@ -283,7 +377,6 @@ async function sendMessage() {
         } finally {
             chatInput.disabled = false;
             sendButton.disabled = false;
-            sendButton.textContent = 'Send';
             chatInput.focus();
         }
     }
@@ -316,34 +409,39 @@ async function clearChat() {
 
 clearChatButton.addEventListener('click', clearChat);
 
-// Update the little status dot in the chat header + on an Agents-tab card,
-// from the latest known agentStatuses entry.
-function updateStatusDot(dotEl, agentId) {
-    if (!dotEl) return;
-    const status = agentStatuses[agentId];
-    dotEl.classList.remove('busy', 'idle');
-    if (status) {
-        dotEl.classList.add(status.status === 'busy' ? 'busy' : 'idle');
-        dotEl.title = status.current_task ? `${status.status}: ${status.current_task}` : status.status;
-    } else {
-        dotEl.title = 'Idle';
-    }
+// Reflect the currently selected team member in the chat header, from cache
+// only (no network calls) - status text/dot, name, avatar.
+function updateChatHeaderForCurrentAgent() {
+    const agent = agentsById[currentAgentId] || {
+        id: currentAgentId,
+        name: currentAgentId === KIT_AGENT_ID ? 'Kit' : currentAgentId,
+    };
+    chatAvatar.textContent = initialsFor(agent.name);
+    chatAvatar.style.background = avatarColorFor(currentAgentId);
+    chatHeaderName.textContent = agent.name;
+    chatHeaderName.title = currentSessionId();
+    chatInput.placeholder = `Message ${agent.name}…`;
+
+    chatTargetStatusDot.classList.remove('idle', 'busy');
+    const cls = statusClassFor(currentAgentId);
+    if (cls) chatTargetStatusDot.classList.add(cls);
+    chatHeaderStatusText.textContent = statusTextFor(currentAgentId);
 }
 
 // Switch who the chat panel is talking to (Kit or a specific agent) - moves
 // to that agent's own persistent thread rather than continuing this one.
-async function switchChatAgent(agentId) {
+async function selectMember(agentId) {
     currentAgentId = agentId;
-    sessionIdSpan.textContent = currentSessionId();
-    updateStatusDot(chatTargetStatusDot, agentId);
+    updateChatHeaderForCurrentAgent();
+    refreshMemberListVisualState();
     messageCount = 0;
     messageCountSpan.textContent = '0 messages';
+    closeMobileSidebar();
     await loadChatHistory();
+    if (!detailsPanelEl.hidden && detailsMode !== 'new') {
+        renderMemberDetails(agentId);
+    }
 }
-
-chatAgentSelect.addEventListener('change', () => {
-    switchChatAgent(chatAgentSelect.value);
-});
 
 function finishStreaming() {
     streamingMessageDiv = null;
@@ -351,7 +449,6 @@ function finishStreaming() {
     streamingText = '';
     chatInput.disabled = false;
     sendButton.disabled = false;
-    sendButton.textContent = 'Send';
     chatInput.focus();
 }
 
@@ -365,37 +462,94 @@ chatInput.addEventListener('keydown', (e) => {
     }
 });
 
-// Load sessions
-async function loadSessions() {
-    sessionsList.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
+// Autogrow the composer textarea up to the CSS max-height.
+chatInput.addEventListener('input', () => {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = `${chatInput.scrollHeight}px`;
+});
 
-    try {
-        const response = await apiFetch(`${API_BASE}/sessions`);
-        if (!response.ok) throw new Error('Failed to load sessions');
+// --- Member sidebar: contacts-style roster of team members ---
 
-        const sessions = await response.json();
-
-        if (sessions.length === 0) {
-            sessionsList.innerHTML = '<div class="pf-v5-c-empty-state"><p class="empty-state">No active sessions</p></div>';
-            return;
-        }
-
-        sessionsList.innerHTML = sessions.map(session => `
-            <div class="session-card">
-                <h4>${session.session_id}</h4>
-                <p><strong>Platform:</strong> ${session.platform}</p>
-                <p><strong>Messages:</strong> ${session.message_count}</p>
-                <p><strong>Last active:</strong> ${new Date(session.last_active).toLocaleString()}</p>
+function memberRowHtml(agent) {
+    const bg = avatarColorFor(agent.id);
+    return `
+        <button class="member-row" data-agent-id="${escapeAttr(agent.id)}">
+            <div class="avatar" style="background:${bg}">${initialsFor(agent.name)}</div>
+            <div class="member-row-text">
+                <div class="member-row-name">${escapeHtml(agent.name)}</div>
+                <div class="member-row-task" data-task-for="${escapeAttr(agent.id)}"></div>
             </div>
-        `).join('');
+            <div class="member-row-dot" data-status-dot="${escapeAttr(agent.id)}"></div>
+        </button>
+    `;
+}
 
+function renderMemberList() {
+    if (!agentsCache.length) {
+        memberList.innerHTML = '<div class="member-list-empty">No team members</div>';
+        return;
+    }
+    const kit = agentsCache.find(a => a.id === KIT_AGENT_ID);
+    const others = agentsCache.filter(a => a.id !== KIT_AGENT_ID).sort((a, b) => a.name.localeCompare(b.name));
+
+    let html = '';
+    if (kit) html += memberRowHtml(kit);
+    if (others.length) {
+        html += '<div class="member-section-label">Team</div>';
+        html += others.map(memberRowHtml).join('');
+    }
+    memberList.innerHTML = html;
+
+    memberList.querySelectorAll('.member-row').forEach(row => {
+        row.addEventListener('click', () => selectMember(row.dataset.agentId));
+    });
+
+    refreshMemberListVisualState();
+}
+
+function refreshMemberListVisualState() {
+    memberList.querySelectorAll('.member-row').forEach(row => {
+        const id = row.dataset.agentId;
+        row.classList.toggle('active', id === currentAgentId);
+        const dot = row.querySelector('[data-status-dot]');
+        if (dot) {
+            dot.classList.remove('idle', 'busy');
+            const cls = statusClassFor(id);
+            if (cls) dot.classList.add(cls);
+        }
+        const taskEl = row.querySelector('[data-task-for]');
+        if (taskEl) {
+            const status = agentStatuses[id];
+            taskEl.textContent = status && status.current_task ? status.current_task : '';
+        }
+    });
+}
+
+async function loadAgents() {
+    try {
+        const [agentsRes, statusRes] = await Promise.all([
+            apiFetch(`${API_BASE}/agents`),
+            apiFetch(`${API_BASE}/agents/status`),
+        ]);
+        if (!agentsRes.ok) throw new Error('Failed to load agents');
+        const agents = await agentsRes.json();
+        agentsCache = agents;
+        agentsById = {};
+        agents.forEach(a => { agentsById[a.id] = a; });
+        if (statusRes.ok) {
+            agentStatuses = await statusRes.json();
+        }
+        renderMemberList();
+        updateChatHeaderForCurrentAgent();
+        if (!detailsPanelEl.hidden && detailsMode === 'member') {
+            renderMemberDetails(detailsAgentId || currentAgentId);
+        }
     } catch (error) {
-        sessionsList.innerHTML = `<p class="empty-state">Error loading sessions: ${error.message}</p>`;
+        memberList.innerHTML = `<div class="member-list-empty">Error loading team: ${escapeHtml(error.message)}</div>`;
     }
 }
 
-// --- Agents tab: roster of team members, each with its own tool/skill
-// scoping and persona, created from an overridable template. ---
+// --- Details panel: info for whichever team member is currently open ---
 
 function formatToolOrSkillList(list) {
     if (list === '*') return 'all';
@@ -418,219 +572,228 @@ function parseToolOrSkillInput(value) {
     return trimmed.split(',').map(s => s.trim()).filter(Boolean);
 }
 
-function escapeHtml(str) {
-    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function updateDetailsStatusLine(agentId) {
+    if (detailsMode !== 'member' || detailsAgentId !== agentId) return;
+    const line = detailsBody.querySelector('.details-status-line');
+    if (!line) return;
+    const cls = statusClassFor(agentId);
+    line.innerHTML = `<span class="status-dot ${cls}"></span> ${escapeHtml(statusTextFor(agentId))}`;
 }
 
-function escapeAttr(str) {
-    return escapeHtml(str).replace(/"/g, '&quot;');
+function formatActivityMini(entry) {
+    const time = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
+    let label;
+    if (entry.event_type === 'agent_status') {
+        label = `Now ${entry.status}${entry.current_task ? ' — ' + entry.current_task : ''}`;
+    } else {
+        const detail = entry.detail || {};
+        label = entry.event_type === 'tool_call_start'
+            ? `Called ${detail.tool_name}`
+            : `Finished ${detail.tool_name}`;
+    }
+    return `<div class="activity-mini-item"><span class="activity-mini-time">${escapeHtml(time)}</span>${escapeHtml(label)}</div>`;
 }
 
-function populateAgentSelect(agents) {
-    const previousValue = chatAgentSelect.value || currentAgentId;
-    chatAgentSelect.innerHTML = agents.map(agent =>
-        `<option value="${agent.id}">${agent.id === KIT_AGENT_ID ? 'Kit (Manager)' : agent.name}</option>`
-    ).join('');
-    if (agents.some(a => a.id === previousValue)) {
-        chatAgentSelect.value = previousValue;
+async function loadMiniActivity(agentId) {
+    const el = document.getElementById('details-activity-mini');
+    if (!el) return;
+    try {
+        const response = await apiFetch(`${API_BASE}/agents/activity?agent_id=${encodeURIComponent(agentId)}&limit=8`);
+        if (!response.ok) throw new Error('failed');
+        const entries = await response.json();
+        const target = document.getElementById('details-activity-mini');
+        if (!target) return; // panel may have moved on since the fetch started
+        target.innerHTML = entries.length === 0
+            ? '<div class="empty-state" style="padding:10px 0;">No recent activity</div>'
+            : entries.slice().reverse().map(formatActivityMini).join('');
+    } catch (error) {
+        const target = document.getElementById('details-activity-mini');
+        if (target) target.innerHTML = '<div class="empty-state" style="padding:10px 0;">Couldn\'t load activity</div>';
     }
 }
 
-async function loadAgents() {
-    agentsList.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
+async function loadPersonaInto(textareaEl) {
+    if (!textareaEl) return;
+    textareaEl.disabled = true;
     try {
-        const [agentsRes, statusRes] = await Promise.all([
-            apiFetch(`${API_BASE}/agents`),
-            apiFetch(`${API_BASE}/agents/status`),
-        ]);
-        if (!agentsRes.ok) throw new Error('Failed to load agents');
-        const agents = await agentsRes.json();
-        if (statusRes.ok) {
-            agentStatuses = await statusRes.json();
+        const response = await apiFetch(`${API_BASE}/persona`);
+        if (!response.ok) throw new Error('Failed to load persona');
+        const data = await response.json();
+        textareaEl.value = data.content;
+    } catch (error) {
+        textareaEl.placeholder = `Error: ${error.message}`;
+    } finally {
+        textareaEl.disabled = false;
+    }
+}
+
+async function savePersonaFrom(textareaEl, statusEl, btnEl) {
+    if (btnEl) btnEl.disabled = true;
+    if (statusEl) statusEl.textContent = '';
+    try {
+        const response = await apiFetch(`${API_BASE}/persona`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: textareaEl.value }),
+        });
+        if (!response.ok) throw new Error('Failed to save');
+        if (statusEl) {
+            statusEl.textContent = 'Saved';
+            statusEl.className = 'form-status success';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
         }
-
-        agentsList.innerHTML = agents.map(agent => {
-            const isKit = agent.id === KIT_AGENT_ID;
-            return `
-            <div class="agent-card" data-agent-id="${agent.id}">
-                <div class="agent-card-header">
-                    <div class="agent-status-dot" data-status-dot="${agent.id}"></div>
-                    <h4>${agent.name}</h4>
-                    <span class="pf-v5-c-label pf-m-outline pf-m-small">
-                        <span class="pf-v5-c-label__content">${agent.id}</span>
-                    </span>
-                </div>
-                <div class="agent-card-view">
-                    <p class="agent-card-meta">${agent.description || ''}</p>
-                    <p class="agent-card-meta"><strong>Tools:</strong> ${formatToolOrSkillList(agent.tools)}</p>
-                    <p class="agent-card-meta"><strong>Skills:</strong> ${formatToolOrSkillList(agent.skills)}</p>
-                    <p class="agent-card-task" data-task-for="${agent.id}"></p>
-                    <div class="agent-card-actions">
-                        <button class="pf-v5-c-button pf-m-secondary pf-m-small" data-talk-to="${agent.id}">Talk to ${agent.name}</button>
-                        ${!isKit ? `<button class="pf-v5-c-button pf-m-secondary pf-m-small" data-edit-agent="${agent.id}">Edit</button>` : ''}
-                        ${!isKit ? `<button class="pf-v5-c-button pf-m-danger pf-m-small" data-delete-agent="${agent.id}">Delete</button>` : ''}
-                    </div>
-                </div>
-                ${!isKit ? `
-                <div class="agent-edit-panel" hidden>
-                    <div class="pf-v5-c-form__group">
-                        <label class="pf-v5-c-form__label">Name</label>
-                        <input class="pf-v5-c-form-control agent-edit-name" type="text" value="${escapeAttr(agent.name)}">
-                    </div>
-                    <div class="pf-v5-c-form__group">
-                        <label class="pf-v5-c-form__label">Description</label>
-                        <input class="pf-v5-c-form-control agent-edit-description" type="text" value="${escapeAttr(agent.description || '')}">
-                    </div>
-                    <div class="pf-v5-c-form__group">
-                        <label class="pf-v5-c-form__label">Tools (comma-separated, or * for all)</label>
-                        <input class="pf-v5-c-form-control agent-edit-tools" type="text" value="${escapeAttr(toolOrSkillListToInputValue(agent.tools))}">
-                    </div>
-                    <div class="pf-v5-c-form__group">
-                        <label class="pf-v5-c-form__label">Skills (comma-separated, or * for all)</label>
-                        <input class="pf-v5-c-form-control agent-edit-skills" type="text" value="${escapeAttr(toolOrSkillListToInputValue(agent.skills))}">
-                    </div>
-                    <div class="pf-v5-c-form__group">
-                        <label class="pf-v5-c-form__label">Soul (persona)</label>
-                        <textarea class="pf-v5-c-form-control agent-edit-soul" rows="10">${escapeHtml(agent.soul || '')}</textarea>
-                    </div>
-                    <div class="agent-card-actions">
-                        <button class="pf-v5-c-button pf-m-primary pf-m-small" data-save-agent="${agent.id}">Save</button>
-                        <button class="pf-v5-c-button pf-m-link pf-m-small" data-cancel-edit="${agent.id}">Cancel</button>
-                        <span class="agent-form-status" data-edit-status="${agent.id}"></span>
-                    </div>
-                </div>` : ''}
-            </div>
-        `;
-        }).join('');
-
-        agentsList.querySelectorAll('[data-status-dot]').forEach(dot => {
-            const agentId = dot.dataset.statusDot;
-            updateStatusDot(dot, agentId);
-            const status = agentStatuses[agentId];
-            const taskEl = agentsList.querySelector(`[data-task-for="${agentId}"]`);
-            if (taskEl) taskEl.textContent = status && status.current_task ? status.current_task : '';
-        });
-
-        agentsList.querySelectorAll('[data-talk-to]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                chatAgentSelect.value = btn.dataset.talkTo;
-                switchChatAgent(btn.dataset.talkTo);
-            });
-        });
-
-        agentsList.querySelectorAll('[data-delete-agent]').forEach(btn => {
-            btn.addEventListener('click', () => deleteAgent(btn.dataset.deleteAgent));
-        });
-
-        agentsList.querySelectorAll('[data-edit-agent]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const card = btn.closest('.agent-card');
-                card.querySelector('.agent-card-view').hidden = true;
-                card.querySelector('.agent-edit-panel').hidden = false;
-            });
-        });
-
-        agentsList.querySelectorAll('[data-cancel-edit]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const card = btn.closest('.agent-card');
-                card.querySelector('.agent-edit-panel').hidden = true;
-                card.querySelector('.agent-card-view').hidden = false;
-            });
-        });
-
-        agentsList.querySelectorAll('[data-save-agent]').forEach(btn => {
-            btn.addEventListener('click', () => saveAgentEdit(btn.dataset.saveAgent));
-        });
-
-        populateAgentSelect(agents);
     } catch (error) {
-        agentsList.innerHTML = `<p class="empty-state">Error loading agents: ${error.message}</p>`;
+        if (statusEl) {
+            statusEl.textContent = `Error: ${error.message}`;
+            statusEl.className = 'form-status error';
+        }
+    } finally {
+        if (btnEl) btnEl.disabled = false;
     }
 }
 
-async function loadAgentTemplatesForNewAgentForm() {
-    try {
-        const response = await apiFetch(`${API_BASE}/agent-templates`);
-        if (!response.ok) throw new Error('Failed to load templates');
-        const templates = await response.json();
-        newAgentTemplateSelect.innerHTML = templates.map(t =>
-            `<option value="${t.id}">${t.name || t.id}</option>`
-        ).join('');
-    } catch (error) {
-        newAgentTemplateSelect.innerHTML = '<option value="">(failed to load templates)</option>';
-    }
-}
+async function renderMemberDetails(agentId) {
+    detailsMode = 'member';
+    detailsAgentId = agentId;
+    detailsTitle.textContent = 'Details';
 
-async function createAgent() {
-    const templateId = newAgentTemplateSelect.value;
-    const id = newAgentIdInput.value.trim();
-    const name = newAgentNameInput.value.trim();
-    if (!templateId || !id) {
-        createAgentStatus.textContent = 'Template and id are required';
-        createAgentStatus.className = 'agent-form-status error';
+    const agent = agentsById[agentId];
+    if (!agent) {
+        detailsBody.innerHTML = '<div class="spinner"></div>';
         return;
     }
 
-    createAgentButton.disabled = true;
-    createAgentStatus.textContent = 'Creating...';
-    createAgentStatus.className = 'agent-form-status';
-    try {
-        const response = await apiFetch(`${API_BASE}/agents`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                template_id: templateId,
-                id,
-                name: name || undefined,
-            }),
-        });
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.detail || `HTTP ${response.status}`);
-        }
-        newAgentIdInput.value = '';
-        newAgentNameInput.value = '';
-        createAgentStatus.textContent = 'Created';
-        createAgentStatus.className = 'agent-form-status success';
-        loadAgents();
-    } catch (error) {
-        createAgentStatus.textContent = `Error: ${error.message}`;
-        createAgentStatus.className = 'agent-form-status error';
-    } finally {
-        createAgentButton.disabled = false;
+    const isKit = agentId === KIT_AGENT_ID;
+    const bg = avatarColorFor(agentId);
+
+    let html = `
+        <div class="details-avatar-row">
+            <div class="avatar" style="width:48px;height:48px;font-size:18px;border-radius:12px;background:${bg}">${initialsFor(agent.name)}</div>
+            <div>
+                <div class="details-name">${escapeHtml(agent.name)}</div>
+                <div class="details-status-line">
+                    <span class="status-dot ${statusClassFor(agentId)}"></span>
+                    ${escapeHtml(statusTextFor(agentId))}
+                </div>
+            </div>
+        </div>
+    `;
+
+    if (agent.description) {
+        html += `
+            <div class="details-section">
+                <div class="details-section-label">About</div>
+                <div class="details-description">${escapeHtml(agent.description)}</div>
+            </div>
+        `;
     }
+
+    html += `
+        <div class="details-section">
+            <div class="details-section-label">Access</div>
+            <p class="details-meta-row"><strong>Tools:</strong> ${escapeHtml(formatToolOrSkillList(agent.tools))}</p>
+            <p class="details-meta-row"><strong>Skills:</strong> ${escapeHtml(formatToolOrSkillList(agent.skills))}</p>
+        </div>
+    `;
+
+    html += `
+        <div class="details-actions">
+            <button class="btn btn-primary" id="details-talk-btn">Message ${escapeHtml(agent.name)}</button>
+            ${!isKit ? '<button class="btn btn-secondary" id="details-edit-btn">Edit</button>' : ''}
+            ${!isKit ? '<button class="btn btn-danger" id="details-delete-btn">Delete</button>' : ''}
+        </div>
+    `;
+
+    html += `
+        <div class="details-section">
+            <div class="details-section-label">Recent activity</div>
+            <div id="details-activity-mini" class="activity-mini-list"><div class="spinner" style="margin:12px auto;"></div></div>
+        </div>
+    `;
+
+    if (isKit) {
+        html += `
+            <div class="details-section">
+                <div class="details-section-label">Persona (SOUL.md)</div>
+                <p class="tab-hint">Defines Kit's personality and behavior. Changes take effect on the next message.</p>
+                <textarea class="form-control" id="kit-persona-editor" rows="12" placeholder="Loading..."></textarea>
+                <div class="details-actions" style="margin-top:8px;">
+                    <button class="btn btn-primary" id="kit-save-persona">Save persona</button>
+                    <span class="form-status" id="kit-persona-status"></span>
+                </div>
+            </div>
+        `;
+    }
+
+    detailsBody.innerHTML = html;
+
+    document.getElementById('details-talk-btn').addEventListener('click', () => selectMember(agentId));
+    if (!isKit) {
+        document.getElementById('details-edit-btn').addEventListener('click', () => renderMemberEditForm(agentId));
+        document.getElementById('details-delete-btn').addEventListener('click', () => deleteAgentFromDetails(agentId));
+    } else {
+        const personaEditor = document.getElementById('kit-persona-editor');
+        const personaStatus = document.getElementById('kit-persona-status');
+        const savePersonaBtn = document.getElementById('kit-save-persona');
+        loadPersonaInto(personaEditor);
+        savePersonaBtn.addEventListener('click', () => savePersonaFrom(personaEditor, personaStatus, savePersonaBtn));
+    }
+
+    loadMiniActivity(agentId);
 }
 
-createAgentButton.addEventListener('click', createAgent);
+function renderMemberEditForm(agentId) {
+    const agent = agentsById[agentId];
+    if (!agent) return;
+    detailsMode = 'edit';
+    detailsTitle.textContent = `Edit ${agent.name}`;
 
-async function deleteAgent(agentId) {
-    if (!confirm(`Delete agent "${agentId}"? This cannot be undone.`)) return;
-    try {
-        const response = await apiFetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        if (currentAgentId === agentId) {
-            chatAgentSelect.value = KIT_AGENT_ID;
-            await switchChatAgent(KIT_AGENT_ID);
-        }
-        loadAgents();
-    } catch (error) {
-        alert(`Failed to delete agent: ${error.message}`);
-    }
+    detailsBody.innerHTML = `
+        <button class="details-back-link" id="details-cancel-edit"><i class="fas fa-arrow-left"></i> Cancel</button>
+        <div class="form-group">
+            <label class="form-label">Name</label>
+            <input class="form-control" id="edit-name" type="text" value="${escapeAttr(agent.name)}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Description</label>
+            <input class="form-control" id="edit-description" type="text" value="${escapeAttr(agent.description || '')}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Tools (comma-separated, or * for all)</label>
+            <input class="form-control" id="edit-tools" type="text" value="${escapeAttr(toolOrSkillListToInputValue(agent.tools))}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Skills (comma-separated, or * for all)</label>
+            <input class="form-control" id="edit-skills" type="text" value="${escapeAttr(toolOrSkillListToInputValue(agent.skills))}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Soul (persona)</label>
+            <textarea class="form-control" id="edit-soul" rows="10">${escapeHtml(agent.soul || '')}</textarea>
+        </div>
+        <div class="details-actions">
+            <button class="btn btn-primary" id="edit-save-btn">Save</button>
+            <button class="btn btn-secondary" id="edit-cancel-btn">Cancel</button>
+            <span class="form-status" id="edit-status"></span>
+        </div>
+    `;
+
+    document.getElementById('details-cancel-edit').addEventListener('click', () => renderMemberDetails(agentId));
+    document.getElementById('edit-cancel-btn').addEventListener('click', () => renderMemberDetails(agentId));
+    document.getElementById('edit-save-btn').addEventListener('click', () => saveMemberEdit(agentId));
 }
 
-async function saveAgentEdit(agentId) {
-    const card = agentsList.querySelector(`.agent-card[data-agent-id="${agentId}"]`);
-    const statusEl = card.querySelector(`[data-edit-status="${agentId}"]`);
+async function saveMemberEdit(agentId) {
+    const statusEl = document.getElementById('edit-status');
     const payload = {
-        name: card.querySelector('.agent-edit-name').value.trim(),
-        description: card.querySelector('.agent-edit-description').value.trim(),
-        tools: parseToolOrSkillInput(card.querySelector('.agent-edit-tools').value),
-        skills: parseToolOrSkillInput(card.querySelector('.agent-edit-skills').value),
-        soul: card.querySelector('.agent-edit-soul').value,
+        name: document.getElementById('edit-name').value.trim(),
+        description: document.getElementById('edit-description').value.trim(),
+        tools: parseToolOrSkillInput(document.getElementById('edit-tools').value),
+        skills: parseToolOrSkillInput(document.getElementById('edit-skills').value),
+        soul: document.getElementById('edit-soul').value,
     };
 
     statusEl.textContent = 'Saving...';
-    statusEl.className = 'agent-form-status';
+    statusEl.className = 'form-status';
     try {
         const response = await apiFetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}`, {
             method: 'PUT',
@@ -641,35 +804,209 @@ async function saveAgentEdit(agentId) {
             const err = await response.json().catch(() => ({}));
             throw new Error(err.detail || `HTTP ${response.status}`);
         }
-        statusEl.textContent = 'Saved';
-        statusEl.className = 'agent-form-status success';
-        loadAgents();
+        await loadAgents();
+        renderMemberDetails(agentId);
+        if (agentId === currentAgentId) updateChatHeaderForCurrentAgent();
     } catch (error) {
         statusEl.textContent = `Error: ${error.message}`;
-        statusEl.className = 'agent-form-status error';
+        statusEl.className = 'form-status error';
+    }
+}
+
+async function deleteAgentFromDetails(agentId) {
+    if (!confirm(`Delete agent "${agentId}"? This cannot be undone.`)) return;
+    try {
+        const response = await apiFetch(`${API_BASE}/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (currentAgentId === agentId) {
+            await selectMember(KIT_AGENT_ID);
+        }
+        await loadAgents();
+        renderMemberDetails(currentAgentId);
+    } catch (error) {
+        alert(`Failed to delete agent: ${error.message}`);
+    }
+}
+
+// --- Add teammate form (details panel, "new" mode) ---
+
+async function loadAgentTemplatesForNewAgentForm(selectEl) {
+    if (!selectEl) return;
+    try {
+        const response = await apiFetch(`${API_BASE}/agent-templates`);
+        if (!response.ok) throw new Error('Failed to load templates');
+        const templates = await response.json();
+        selectEl.innerHTML = templates.map(t =>
+            `<option value="${escapeAttr(t.id)}">${escapeHtml(t.name || t.id)}</option>`
+        ).join('');
+    } catch (error) {
+        selectEl.innerHTML = '<option value="">(failed to load templates)</option>';
+    }
+}
+
+function renderAddTeammateForm() {
+    detailsMode = 'new';
+    detailsTitle.textContent = 'Add teammate';
+
+    detailsBody.innerHTML = `
+        <button class="details-back-link" id="details-cancel-new"><i class="fas fa-arrow-left"></i> Back</button>
+        <div class="form-group">
+            <label class="form-label">Template</label>
+            <select class="form-control" id="new-agent-template"></select>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Id</label>
+            <input class="form-control" id="new-agent-id" type="text" placeholder="e.g. tester-1">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Display name (optional)</label>
+            <input class="form-control" id="new-agent-name" type="text" placeholder="e.g. Tester">
+        </div>
+        <div class="details-actions">
+            <button class="btn btn-primary" id="create-agent-button">Create teammate</button>
+            <span class="form-status" id="create-agent-status"></span>
+        </div>
+    `;
+
+    document.getElementById('details-cancel-new').addEventListener('click', () => renderMemberDetails(currentAgentId));
+    document.getElementById('create-agent-button').addEventListener('click', createAgent);
+    loadAgentTemplatesForNewAgentForm(document.getElementById('new-agent-template'));
+}
+
+async function createAgent() {
+    const templateSelect = document.getElementById('new-agent-template');
+    const idInput = document.getElementById('new-agent-id');
+    const nameInput = document.getElementById('new-agent-name');
+    const statusEl = document.getElementById('create-agent-status');
+    const btn = document.getElementById('create-agent-button');
+
+    const templateId = templateSelect.value;
+    const id = idInput.value.trim();
+    const name = nameInput.value.trim();
+    if (!templateId || !id) {
+        statusEl.textContent = 'Template and id are required';
+        statusEl.className = 'form-status error';
+        return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Creating...';
+    statusEl.className = 'form-status';
+    try {
+        const response = await apiFetch(`${API_BASE}/agents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ template_id: templateId, id, name: name || undefined }),
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        const created = await response.json();
+        statusEl.textContent = 'Created';
+        statusEl.className = 'form-status success';
+        await loadAgents();
+        renderMemberDetails(created.id);
+    } catch (error) {
+        statusEl.textContent = `Error: ${error.message}`;
+        statusEl.className = 'form-status error';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+addTeammateBtn.addEventListener('click', () => {
+    showDetailsPanel();
+    renderAddTeammateForm();
+    closeMobileSidebar();
+});
+
+// --- Workspace overlay: Sessions / Team Activity / Memory / Tools / Schedules / Skills ---
+// Workspace-wide sections that aren't tied to any one team member.
+
+const WORKSPACE_LOADERS = {
+    activity: loadActivity,
+    tools: loadTools,
+    schedules: loadSchedules,
+    skills: loadSkills,
+    sessions: loadSessions,
+};
+
+function openWorkspacePanel(tabName) {
+    currentWorkspaceTab = tabName;
+    workspaceOverlay.hidden = false;
+    document.querySelectorAll('.rail-btn[data-panel]').forEach(b => b.classList.toggle('active', b.dataset.panel === tabName));
+    document.querySelectorAll('.workspace-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
+    document.querySelectorAll('.workspace-modal-body .tab-content').forEach(t => t.classList.toggle('active', t.id === `${tabName}-tab`));
+    const loader = WORKSPACE_LOADERS[tabName];
+    if (loader) loader();
+}
+
+function closeWorkspacePanel() {
+    workspaceOverlay.hidden = true;
+    currentWorkspaceTab = null;
+    document.querySelectorAll('.rail-btn[data-panel]').forEach(b => b.classList.remove('active'));
+}
+
+document.querySelectorAll('.rail-btn[data-panel]').forEach(btn => {
+    btn.addEventListener('click', () => openWorkspacePanel(btn.dataset.panel));
+});
+document.querySelectorAll('.workspace-tab').forEach(btn => {
+    btn.addEventListener('click', () => openWorkspacePanel(btn.dataset.tab));
+});
+closeWorkspaceBtn.addEventListener('click', closeWorkspacePanel);
+workspaceOverlay.addEventListener('click', (e) => {
+    if (e.target === workspaceOverlay) closeWorkspacePanel();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !workspaceOverlay.hidden) closeWorkspacePanel();
+});
+
+// Load sessions
+async function loadSessions() {
+    sessionsList.innerHTML = '<div class="spinner"></div>';
+
+    try {
+        const response = await apiFetch(`${API_BASE}/sessions`);
+        if (!response.ok) throw new Error('Failed to load sessions');
+
+        const sessions = await response.json();
+
+        if (sessions.length === 0) {
+            sessionsList.innerHTML = '<p class="empty-state">No active sessions</p>';
+            return;
+        }
+
+        sessionsList.innerHTML = sessions.map(session => `
+            <div class="session-card">
+                <h4>${escapeHtml(session.session_id)}</h4>
+                <p><strong>Platform:</strong> ${escapeHtml(session.platform)}</p>
+                <p><strong>Messages:</strong> ${session.message_count}</p>
+                <p><strong>Last active:</strong> ${new Date(session.last_active).toLocaleString()}</p>
+            </div>
+        `).join('');
+
+    } catch (error) {
+        sessionsList.innerHTML = `<p class="empty-state">Error loading sessions: ${escapeHtml(error.message)}</p>`;
     }
 }
 
 // --- Tools tab: dynamic view of the global tool registry ---
 
 async function loadTools() {
-    toolsList.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
+    toolsList.innerHTML = '<div class="spinner"></div>';
     try {
         const response = await apiFetch(`${API_BASE}/tools`);
         if (!response.ok) throw new Error('Failed to load tools');
         const tools = await response.json();
         toolsList.innerHTML = tools.map(tool => `
-            <div class="pf-v5-c-description-list__group">
-                <dt class="pf-v5-c-description-list__term">
-                    <span class="pf-v5-c-description-list__text">${tool.name}</span>
-                </dt>
-                <dd class="pf-v5-c-description-list__description">
-                    <div class="pf-v5-c-description-list__text">${tool.description || ''}</div>
-                </dd>
+            <div class="tool-entry">
+                <div class="tool-entry-name">${escapeHtml(tool.name)}</div>
+                <div class="tool-entry-desc">${escapeHtml(tool.description || '')}</div>
             </div>
         `).join('');
     } catch (error) {
-        toolsList.innerHTML = `<p class="empty-state">Error loading tools: ${error.message}</p>`;
+        toolsList.innerHTML = `<p class="empty-state">Error loading tools: ${escapeHtml(error.message)}</p>`;
     }
 }
 
@@ -683,7 +1020,7 @@ function formatActivityEntry(entry) {
         return `
             <div class="activity-item status-event">
                 <div class="activity-item-header">
-                    <span>${entry.agent_id} is now ${entry.status}${task}</span>
+                    <span>${escapeHtml(entry.agent_id)} is now ${escapeHtml(entry.status)}${escapeHtml(task)}</span>
                     <span class="activity-item-time">${time}</span>
                 </div>
             </div>
@@ -699,17 +1036,17 @@ function formatActivityEntry(entry) {
     return `
         <div class="activity-item">
             <div class="activity-item-header">
-                <span>${label}</span>
+                <span>${escapeHtml(label)}</span>
                 <span class="activity-item-time">${time}</span>
             </div>
-            <div class="activity-item-detail">${body}</div>
+            <div class="activity-item-detail">${escapeHtml(body)}</div>
         </div>
     `;
 }
 
 async function loadActivity() {
     refreshActivityBtn.disabled = true;
-    activityList.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
+    activityList.innerHTML = '<div class="spinner"></div>';
     try {
         const response = await apiFetch(`${API_BASE}/agents/activity`);
         if (!response.ok) throw new Error('Failed to load activity');
@@ -718,7 +1055,7 @@ async function loadActivity() {
             ? '<p class="empty-state">No agent activity yet</p>'
             : entries.slice().reverse().map(formatActivityEntry).join('');
     } catch (error) {
-        activityList.innerHTML = `<p class="empty-state">Error: ${error.message}</p>`;
+        activityList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
     } finally {
         refreshActivityBtn.disabled = false;
     }
@@ -733,7 +1070,7 @@ async function searchMemory() {
 
     memorySearchBtn.disabled = true;
     memorySearchBtn.textContent = 'Searching...';
-    memoryResults.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
+    memoryResults.innerHTML = '<div class="spinner"></div>';
 
     try {
         const response = await apiFetch(`${API_BASE}/chat`, {
@@ -758,12 +1095,12 @@ async function searchMemory() {
         memoryResults.innerHTML = `
             <div class="memory-item">
                 <div class="memory-item-type">Search Results</div>
-                <div class="memory-item-content">${results}</div>
+                <div class="memory-item-content">${escapeHtml(results)}</div>
             </div>
         `;
 
     } catch (error) {
-        memoryResults.innerHTML = `<p class="empty-state">Error: ${error.message}</p>`;
+        memoryResults.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
     } finally {
         memorySearchBtn.disabled = false;
         memorySearchBtn.textContent = 'Search';
@@ -782,7 +1119,7 @@ memorySearchInput.addEventListener('keydown', (e) => {
 async function loadSchedules() {
     refreshSchedulesBtn.disabled = true;
     refreshSchedulesBtn.textContent = 'Loading...';
-    schedulesList.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
+    schedulesList.innerHTML = '<div class="spinner"></div>';
 
     try {
         const response = await apiFetch(`${API_BASE}/chat`, {
@@ -804,12 +1141,12 @@ async function loadSchedules() {
         // Display raw response (schedules formatted by tool)
         schedulesList.innerHTML = `
             <div class="schedule-card">
-                <pre style="white-space: pre-wrap; font-size: 13px; color: #94a3b8;">${data.response}</pre>
+                <pre style="white-space: pre-wrap; font-size: 13px; margin: 0; color: var(--text-secondary);">${escapeHtml(data.response)}</pre>
             </div>
         `;
 
     } catch (error) {
-        schedulesList.innerHTML = `<p class="empty-state">Error: ${error.message}</p>`;
+        schedulesList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
     } finally {
         refreshSchedulesBtn.disabled = false;
         refreshSchedulesBtn.textContent = 'Refresh';
@@ -822,7 +1159,7 @@ refreshSchedulesBtn.addEventListener('click', loadSchedules);
 async function loadSkills() {
     refreshSkillsBtn.disabled = true;
     refreshSkillsBtn.textContent = 'Loading...';
-    skillsList.innerHTML = '<div class="pf-v5-c-spinner pf-m-md" style="margin: 20px auto;"><span class="pf-v5-c-spinner__clipper"></span></div>';
+    skillsList.innerHTML = '<div class="spinner"></div>';
 
     try {
         const response = await apiFetch(`${API_BASE}/chat`, {
@@ -843,15 +1180,13 @@ async function loadSkills() {
 
         // Display raw response (skills formatted by tool)
         skillsList.innerHTML = `
-            <div class="pf-v5-c-card" style="background: var(--pf-v5-global--BackgroundColor--200);">
-                <div class="pf-v5-c-card__body">
-                    <pre style="white-space: pre-wrap; font-size: 13px;">${data.response}</pre>
-                </div>
+            <div class="schedule-card">
+                <pre style="white-space: pre-wrap; font-size: 13px; margin: 0;">${escapeHtml(data.response)}</pre>
             </div>
         `;
 
     } catch (error) {
-        skillsList.innerHTML = `<p class="empty-state">Error: ${error.message}</p>`;
+        skillsList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
     } finally {
         refreshSkillsBtn.disabled = false;
         refreshSkillsBtn.textContent = 'Refresh';
@@ -910,18 +1245,11 @@ function connectWebSocket() {
 function handleActivityEvent(data) {
     if (data.event_type === 'agent_status') {
         agentStatuses[data.agent_id] = data;
-        if (data.agent_id === currentAgentId) {
-            updateStatusDot(chatTargetStatusDot, data.agent_id);
-        }
-        const dot = agentsList.querySelector(`[data-status-dot="${data.agent_id}"]`);
-        if (dot) {
-            updateStatusDot(dot, data.agent_id);
-            const taskEl = agentsList.querySelector(`[data-task-for="${data.agent_id}"]`);
-            if (taskEl) taskEl.textContent = data.current_task || '';
-        }
+        if (data.agent_id === currentAgentId) updateChatHeaderForCurrentAgent();
+        refreshMemberListVisualState();
+        updateDetailsStatusLine(data.agent_id);
     }
-    const activityTab = document.getElementById('activity-tab');
-    if (activityTab && activityTab.classList.contains('pf-m-current')) {
+    if (!workspaceOverlay.hidden && currentWorkspaceTab === 'activity') {
         activityList.insertAdjacentHTML('afterbegin', formatActivityEntry(data));
     }
 }
@@ -946,15 +1274,39 @@ function handleWebSocketMessage(data) {
             if (isOwnSession) {
                 removeThinkingIndicator();
                 streamingText = '';
+
+                const agent = agentsById[currentAgentId];
+                const name = agent ? agent.name : (currentAgentId === KIT_AGENT_ID ? 'Kit' : currentAgentId);
+
                 streamingMessageDiv = document.createElement('div');
                 streamingMessageDiv.className = 'message assistant streaming';
+
+                const avatarDiv = document.createElement('div');
+                avatarDiv.className = 'avatar';
+                avatarDiv.style.background = avatarColorFor(currentAgentId);
+                avatarDiv.textContent = initialsFor(name);
+
+                const bodyDiv = document.createElement('div');
+                bodyDiv.className = 'message-body';
+
+                const headerLine = document.createElement('div');
+                headerLine.className = 'message-header-line';
+                const authorSpan = document.createElement('span');
+                authorSpan.className = 'message-author';
+                authorSpan.textContent = name;
+                const timeSpan = document.createElement('span');
+                timeSpan.className = 'message-time';
+                timeSpan.textContent = new Date().toLocaleTimeString();
+                headerLine.appendChild(authorSpan);
+                headerLine.appendChild(timeSpan);
+
                 streamingContentDiv = document.createElement('div');
                 streamingContentDiv.className = 'message-content';
-                streamingMessageDiv.appendChild(streamingContentDiv);
-                const timeDiv = document.createElement('div');
-                timeDiv.className = 'message-time';
-                timeDiv.textContent = new Date().toLocaleTimeString();
-                streamingMessageDiv.appendChild(timeDiv);
+
+                bodyDiv.appendChild(headerLine);
+                bodyDiv.appendChild(streamingContentDiv);
+                streamingMessageDiv.appendChild(avatarDiv);
+                streamingMessageDiv.appendChild(bodyDiv);
                 chatMessages.appendChild(streamingMessageDiv);
                 scrollChatToBottom();
             }
@@ -973,12 +1325,9 @@ function handleWebSocketMessage(data) {
                 const toolDiv = document.createElement('div');
                 toolDiv.className = 'tool-call tool-running';
                 toolDiv.id = `tool-${data.tool_name}-${Date.now()}`;
-                toolDiv.innerHTML =
-                    `<span class="tool-call-name">▶ ${data.tool_name}</span>`;
-                streamingMessageDiv.insertBefore(
-                    toolDiv,
-                    streamingMessageDiv.querySelector('.message-time')
-                );
+                toolDiv.innerHTML = `<span class="tool-call-name">▶ ${escapeHtml(data.tool_name)}</span>`;
+                const body = streamingMessageDiv.querySelector('.message-body');
+                body.appendChild(toolDiv);
                 scrollChatToBottom();
             }
             break;
@@ -1062,46 +1411,6 @@ function sendPing() {
     }
 }
 
-// Load persona (SOUL.md)
-async function loadPersona() {
-    personaEditor.disabled = true;
-    personaStatus.textContent = '';
-    try {
-        const response = await apiFetch(`${API_BASE}/persona`);
-        if (!response.ok) throw new Error('Failed to load persona');
-        const data = await response.json();
-        personaEditor.value = data.content;
-    } catch (error) {
-        personaStatus.textContent = `Error: ${error.message}`;
-    } finally {
-        personaEditor.disabled = false;
-    }
-}
-
-// Save persona (SOUL.md)
-async function savePersona() {
-    savePersonaBtn.disabled = true;
-    savePersonaBtn.textContent = 'Saving...';
-    personaStatus.textContent = '';
-    try {
-        const response = await apiFetch(`${API_BASE}/persona`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: personaEditor.value }),
-        });
-        if (!response.ok) throw new Error('Failed to save');
-        personaStatus.textContent = 'Saved';
-        setTimeout(() => { personaStatus.textContent = ''; }, 3000);
-    } catch (error) {
-        personaStatus.textContent = `Error: ${error.message}`;
-    } finally {
-        savePersonaBtn.disabled = false;
-        savePersonaBtn.textContent = 'Save';
-    }
-}
-
-savePersonaBtn.addEventListener('click', savePersona);
-
 // Load chat history from server, for whichever agent is currently selected
 async function loadChatHistory() {
     const sessionId = currentSessionId();
@@ -1167,19 +1476,7 @@ async function init() {
     ]);
 
     if (connected) {
-        sessionIdSpan.textContent = currentSessionId();
-        const [agentsRes, statusRes] = await Promise.all([
-            apiFetch(`${API_BASE}/agents`).catch(() => null),
-            apiFetch(`${API_BASE}/agents/status`).catch(() => null),
-        ]);
-        if (agentsRes && agentsRes.ok) {
-            populateAgentSelect(await agentsRes.json());
-        }
-        if (statusRes && statusRes.ok) {
-            agentStatuses = await statusRes.json();
-            updateStatusDot(chatTargetStatusDot, currentAgentId);
-        }
-        loadAgentTemplatesForNewAgentForm();
+        await loadAgents();
         await loadChatHistory();
         addMessage('Connected to Kit', 'system');
         loadSessions();
