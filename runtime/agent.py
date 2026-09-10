@@ -17,8 +17,27 @@ from runtime.knowledge import KnowledgeManager
 from runtime.mcp import MCPManager, parse_mcp_tool_name
 from runtime.skills import SkillsManager
 from tools.core import TOOLS, execute_tool
+from env_config import env_int
 
 MAX_TOOL_ROUNDS = 10
+
+# Rough chars-per-token ratio used for estimation (conservative — most
+# tokenizers average ~3.5–4 chars/token; using 3 overestimates and errs
+# on the side of caution).
+_CHARS_PER_TOKEN = 3
+
+# Fallback context-window budget (in tokens) when the model's limit
+# can't be detected from the API.  Override with MAX_CONTEXT_TOKENS in
+# .env if needed.
+_FALLBACK_CONTEXT_TOKENS = env_int("MAX_CONTEXT_TOKENS", 120_000)
+
+# Single tool-result cap (characters).  Prevents one enormous tool
+# response from filling the entire context window in a single round.
+MAX_TOOL_RESULT_CHARS = env_int("MAX_TOOL_RESULT_CHARS", 8_000)
+
+# Reserve this fraction of the detected context window for the model's
+# own output and overhead (tool definition expansion by proxies, etc.).
+_CONTEXT_RESERVE_FRACTION = 0.20
 
 # How many hops an agent_delegate chain may take before it's refused. Guards
 # against a deliberately-configured delegation cycle (A -> B -> A) recursing
@@ -165,6 +184,46 @@ class PersonalAssistant:
         self.mcp: Optional[MCPManager] = (
             MCPManager(mcp_servers) if mcp_servers else None
         )
+
+        # Context-window limit — resolved lazily on first chat() call
+        # (needs an async API call to detect the model's limit).
+        self._max_context_tokens: Optional[int] = None
+
+    async def _resolve_context_limit(self) -> int:
+        """Detect the model's context window from the API and cache it.
+
+        Tries the OpenAI-compatible ``GET /models/{model}`` endpoint first
+        (works with LiteLLM, vLLM, Ollama, etc.). Falls back to the env
+        var ``MAX_CONTEXT_TOKENS``, then to a conservative built-in default.
+        """
+        if self._max_context_tokens is not None:
+            return self._max_context_tokens
+
+        detected: Optional[int] = None
+        try:
+            if self.provider in OPENAI_COMPATIBLE_PROVIDERS:
+                model_info = await self.client.models.retrieve(self.model)
+                ctx = getattr(model_info, "context_window", None)
+                if ctx is None:
+                    ctx = getattr(model_info, "max_model_len", None)
+                if ctx is None and hasattr(model_info, "model_extra"):
+                    extras = model_info.model_extra or {}
+                    ctx = extras.get("context_window") or extras.get("max_model_len")
+                if isinstance(ctx, (int, float)) and ctx > 0:
+                    detected = int(ctx)
+        except Exception:
+            pass
+
+        if detected:
+            self._max_context_tokens = int(detected * (1 - _CONTEXT_RESERVE_FRACTION))
+            print(f"📐 Detected context window for {self.model}: {detected} tokens "
+                  f"(using {self._max_context_tokens} after {int(_CONTEXT_RESERVE_FRACTION*100)}% reserve)")
+        else:
+            self._max_context_tokens = _FALLBACK_CONTEXT_TOKENS
+            print(f"📐 Could not detect context window for {self.model}, "
+                  f"using fallback: {self._max_context_tokens} tokens")
+
+        return self._max_context_tokens
 
     def _load_file(self, filename: str) -> str:
         """Load a file from workspace directory."""
@@ -386,6 +445,38 @@ class PersonalAssistant:
                 return await self.mcp.call_tool(server_name, real_tool_name, tool_args)
         return await asyncio.to_thread(self._execute_tool, tool_name, tool_args)
 
+    @staticmethod
+    def _estimate_tokens(messages: list, tools: list) -> int:
+        """Rough token estimate for the full LLM request payload."""
+        total_chars = sum(len(json.dumps(t)) for t in tools)
+        for m in messages:
+            content = m.get("content") or ""
+            total_chars += len(content)
+            for tc in m.get("tool_calls", []):
+                total_chars += len(tc.get("function", {}).get("arguments", ""))
+        return total_chars // _CHARS_PER_TOKEN
+
+    @staticmethod
+    def _trim_context(messages: list, tools: list, limit: int) -> None:
+        """Drop or shorten the oldest tool-result messages until the
+        estimated token count is under `limit`.  Mutates `messages`."""
+        while PersonalAssistant._estimate_tokens(messages, tools) > limit:
+            trimmed = False
+            for m in messages:
+                if m.get("role") == "tool" and len(m.get("content", "")) > 200:
+                    m["content"] = m["content"][:200] + "\n[truncated to fit context window]"
+                    trimmed = True
+                    break
+            if not trimmed:
+                break
+
+    @staticmethod
+    def _cap_tool_result(result: str) -> str:
+        """Truncate a single tool result if it exceeds the per-result cap."""
+        if len(result) > MAX_TOOL_RESULT_CHARS:
+            return result[:MAX_TOOL_RESULT_CHARS] + f"\n[truncated — result was {len(result)} chars]"
+        return result
+
     async def chat(self, user_message: str, _delegation_depth: int = 0) -> str:
         """
         Send a message and get a complete response (non-streaming).
@@ -415,6 +506,7 @@ class PersonalAssistant:
         self._current_delegation_depth = _delegation_depth
         try:
             await self._ensure_mcp_connected()
+            context_limit = await self._resolve_context_limit()
             system_prompt = self._build_system_prompt()
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -426,6 +518,7 @@ class PersonalAssistant:
             all_content_parts: list[str] = []
 
             for _round in range(MAX_TOOL_ROUNDS):
+                self._trim_context(messages, self._filtered_tools, context_limit)
                 stream = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
@@ -492,12 +585,9 @@ class PersonalAssistant:
                         yield {"type": "tool_call_start", "tool_name": tool_name, "tool_args": tool_args}
 
                         try:
-                            # Tool execution (shell, browser, skills) is
-                            # synchronous and can block for seconds; run it
-                            # in a thread so it doesn't stall the event loop.
-                            # agent_delegate is the one exception - it runs a
-                            # nested async chat_stream and is awaited directly.
-                            result = str(await self._execute_tool_async(tool_name, tool_args))
+                            result = self._cap_tool_result(
+                                str(await self._execute_tool_async(tool_name, tool_args))
+                            )
                         except Exception as e:
                             result = f"Error: {e}"
 
