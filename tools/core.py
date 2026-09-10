@@ -3,7 +3,10 @@ Core tools for file operations, shell execution, and memory management.
 """
 
 import os
+import re
+import shlex
 import subprocess
+import yaml
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict
@@ -13,6 +16,10 @@ from tools.web import WEB_TOOLS, WEB_TOOL_FUNCTIONS
 from tools.browser import BROWSER_TOOLS, BROWSER_TOOL_FUNCTIONS
 from tools.scheduler import SCHEDULER_TOOLS, SCHEDULER_TOOL_FUNCTIONS
 from tools.skills import SKILLS_TOOLS, SKILLS_TOOL_FUNCTIONS
+
+WORKSPACE_ROOT = Path("workspace").resolve()
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+SHELL_METACHARACTERS_RE = re.compile(r'[&|;`$<>]')
 
 
 def read(path: str) -> str:
@@ -50,7 +57,10 @@ def write(path: str, content: str) -> str:
     Returns:
         Success or error message
     """
-    file_path = Path(path).expanduser()
+    file_path = Path(path).expanduser().resolve()
+
+    if not file_path.is_relative_to(WORKSPACE_ROOT):
+        return f"Error: writes are restricted to the workspace directory ({WORKSPACE_ROOT})"
 
     try:
         # Create parent directories if they don't exist
@@ -96,6 +106,18 @@ def list_files(directory: str = ".") -> str:
         return f"Error listing directory: {e}"
 
 
+def _load_shell_safety_config() -> Dict[str, Any]:
+    """Load the `tools.safety` block from config.yaml, if present."""
+    config_path = Path("config.yaml")
+    if not config_path.exists():
+        return {}
+    try:
+        config = yaml.safe_load(config_path.read_text()) or {}
+    except Exception:
+        return {}
+    return (config.get("tools") or {}).get("safety") or {}
+
+
 def exec_shell(command: str) -> str:
     """
     Execute a shell command.
@@ -108,16 +130,37 @@ def exec_shell(command: str) -> str:
 
     Security:
         - No sudo commands allowed
+        - No shell metacharacters (pipes, chains, redirects, substitution)
+        - Runs with shell=False; if config.yaml sets tools.safety.allowed_commands,
+          the command's first token must be in that list
         - Destructive commands require confirmation in higher layer
     """
     # Safety check: block sudo
     if command.strip().startswith("sudo"):
         return "Error: sudo commands are not allowed for safety"
 
+    # Safety check: block shell metacharacters that would let a single
+    # exec_shell call chain/redirect into arbitrary additional commands
+    if SHELL_METACHARACTERS_RE.search(command):
+        return "Error: command contains disallowed shell metacharacters (& | ; ` $ < >)"
+
+    try:
+        args = shlex.split(command)
+    except ValueError as e:
+        return f"Error: could not parse command: {e}"
+
+    if not args:
+        return "Error: empty command"
+
+    safety = _load_shell_safety_config()
+    allowed_commands = safety.get("allowed_commands") or []
+    if allowed_commands and args[0] not in allowed_commands:
+        return f"Error: command '{args[0]}' is not in the allowed_commands list"
+
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            args,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=30,  # 30 second timeout
@@ -181,6 +224,8 @@ def memory_get(date: str = None) -> str:
     """
     if date is None:
         date = datetime.now().strftime("%Y-%m-%d")
+    elif not DATE_RE.match(date):
+        return f"Error: invalid date '{date}', expected YYYY-MM-DD format"
 
     log_path = Path(f"workspace/memory/{date}.md")
 
@@ -193,23 +238,10 @@ def memory_get(date: str = None) -> str:
         return f"Error reading daily log: {e}"
 
 
-def memory_search(query: str, n_results: int = 3) -> str:
-    """
-    Semantic search over all memories (MEMORY.md + daily logs).
-
-    This function requires an EmbeddingsManager instance to be passed via context.
-    It's a placeholder that will be dynamically bound by the agent.
-
-    Args:
-        query: Search query
-        n_results: Number of results to return
-
-    Returns:
-        Formatted search results
-    """
-    # This will be replaced by agent with actual embeddings manager
-    return "Error: memory_search requires embeddings to be initialized"
-
+# Note: "memory_search" has a tool schema below (so the LLM knows it exists)
+# but no entry in CORE_TOOL_FUNCTIONS. It's only ever dispatched through
+# PersonalAssistant._execute_tool() in runtime/agent.py, which has access to
+# the EmbeddingsManager needed to actually perform the search.
 
 # Core tool definitions for LlamaStack/OGX
 CORE_TOOLS = [
@@ -351,7 +383,6 @@ CORE_TOOL_FUNCTIONS = {
     "exec_shell": exec_shell,
     "memory_write": memory_write,
     "memory_get": memory_get,
-    "memory_search": memory_search,
 }
 
 # Combine all tool functions

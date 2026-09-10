@@ -4,9 +4,12 @@ Browser automation tools using Playwright.
 
 from pathlib import Path
 from typing import Optional
-import base64
 import subprocess
 import sys
+
+# Fixed helper scripts, invoked with untrusted values passed as real argv
+# entries (never interpolated into Python source) to avoid code injection.
+_SCRIPTS_DIR = Path(__file__).parent / "_browser_scripts"
 
 
 def browser_screenshot(url: str, output_path: str = "workspace/screenshot.png") -> str:
@@ -21,24 +24,9 @@ def browser_screenshot(url: str, output_path: str = "workspace/screenshot.png") 
         Success message with path or error
     """
     # Run in subprocess to avoid asyncio conflicts
-    script = f"""
-from playwright.sync_api import sync_playwright
-from pathlib import Path
-
-output = Path('{output_path}')
-output.parent.mkdir(parents=True, exist_ok=True)
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page()
-    page.goto('{url}', wait_until='networkidle', timeout=30000)
-    page.screenshot(path=str(output), full_page=True)
-    browser.close()
-"""
-
     try:
         result = subprocess.run(
-            [sys.executable, "-c", script],
+            [sys.executable, str(_SCRIPTS_DIR / "screenshot.py"), url, output_path],
             capture_output=True,
             text=True,
             timeout=60
@@ -64,28 +52,9 @@ def browser_navigate(url: str, actions: str) -> str:
     Returns:
         Result of navigation
     """
-    script = f"""
-from playwright.sync_api import sync_playwright
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page()
-    page.goto('{url}', wait_until='networkidle', timeout=30000)
-
-    title = page.title()
-    url_after = page.url
-    text_content = page.inner_text('body')[:1000]
-
-    browser.close()
-
-    print(f"Title: {{title}}")
-    print(f"Final URL: {{url_after}}")
-    print(f"Content: {{text_content}}")
-"""
-
     try:
         result = subprocess.run(
-            [sys.executable, "-c", script],
+            [sys.executable, str(_SCRIPTS_DIR / "navigate.py"), url],
             capture_output=True,
             text=True,
             timeout=60
@@ -114,37 +83,9 @@ def browser_extract(url: str, selector: str) -> str:
     Returns:
         Extracted text content
     """
-    script = f"""
-from playwright.sync_api import sync_playwright
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page()
-    page.goto('{url}', wait_until='networkidle', timeout=30000)
-
-    elements = page.query_selector_all('{selector}')
-
-    if not elements:
-        print(f"No elements found matching selector: {selector}")
-    else:
-        results = []
-        for i, el in enumerate(elements[:10], 1):
-            text = el.inner_text().strip()
-            if text:
-                results.append(f"{{i}}. {{text}}")
-
-        if results:
-            for r in results:
-                print(r)
-        else:
-            print(f"Found {{len(elements)}} elements but no text content")
-
-    browser.close()
-"""
-
     try:
         result = subprocess.run(
-            [sys.executable, "-c", script],
+            [sys.executable, str(_SCRIPTS_DIR / "extract.py"), url, selector],
             capture_output=True,
             text=True,
             timeout=60

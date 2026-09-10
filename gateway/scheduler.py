@@ -102,20 +102,14 @@ async def _tick(session_manager, ws_manager) -> None:
         print(f"Scheduler: running {schedule_id} — {task}")
 
         try:
-            response = await asyncio.get_event_loop().run_in_executor(
-                None,
-                session_manager.send_message,
-                "scheduler",
-                schedule_id,
-                task,
-            )
+            response = await session_manager.send_message("scheduler", schedule_id, task)
 
             await ws_manager.broadcast({
                 "type": "schedule_run",
                 "schedule_id": schedule_id,
                 "task": task,
                 "result": response[:500],
-                "timestamp": asyncio.get_event_loop().time(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
         except Exception as e:
             response = f"Error: {e}"

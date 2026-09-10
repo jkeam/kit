@@ -5,11 +5,54 @@ Skills are auto-generated Python functions that the assistant creates
 from repeated patterns or explicit requests.
 """
 
+import builtins
 import json
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import hashlib
+
+# Modules a skill is allowed to import. Keeps skills useful for the kind of
+# small data-transformation tasks they're meant for, without handing them
+# os/subprocess/sys/etc.
+_SAFE_MODULES = (
+    "json", "math", "re", "datetime", "time", "random", "string",
+    "itertools", "collections", "functools", "textwrap",
+)
+
+# Builtins a skill is allowed to use. Notably excludes open, eval, exec,
+# compile, input, and __import__ (replaced below with a restricted version).
+_SAFE_BUILTIN_NAMES = (
+    "abs", "all", "any", "bool", "chr", "dict", "divmod", "enumerate",
+    "filter", "float", "format", "frozenset", "hash", "hex", "int",
+    "isinstance", "issubclass", "iter", "len", "list", "map", "max", "min",
+    "next", "oct", "ord", "pow", "print", "range", "repr", "reversed",
+    "round", "set", "slice", "sorted", "str", "sum", "tuple", "type", "zip",
+    "True", "False", "None",
+    "Exception", "ValueError", "TypeError", "KeyError", "IndexError",
+    "StopIteration", "RuntimeError", "AttributeError", "ZeroDivisionError",
+)
+
+
+def _restricted_import(name, *args, **kwargs):
+    if name not in _SAFE_MODULES:
+        raise ImportError(f"Import of '{name}' is not allowed in skills")
+    return __import__(name, *args, **kwargs)
+
+
+def _build_restricted_namespace() -> Dict[str, Any]:
+    """Build an exec() namespace with restricted builtins and imports."""
+    safe_builtins = {
+        name: getattr(builtins, name)
+        for name in _SAFE_BUILTIN_NAMES
+        if hasattr(builtins, name)
+    }
+    safe_builtins["__import__"] = _restricted_import
+
+    namespace: Dict[str, Any] = {"__builtins__": safe_builtins}
+    for mod_name in _SAFE_MODULES:
+        namespace[mod_name] = __import__(mod_name)
+    return namespace
 
 
 class SkillsManager:
@@ -54,6 +97,11 @@ class SkillsManager:
 
         Returns:
             Success message or error
+
+        Note:
+            Skills run with restricted builtins and a small stdlib import
+            allowlist (see _SAFE_MODULES / _SAFE_BUILTIN_NAMES) — no
+            filesystem, network, subprocess, or arbitrary imports.
         """
         # Validate name
         if not name.replace("-", "").replace("_", "").isalnum():
@@ -86,6 +134,7 @@ Version: 1
                 "version": 1,
                 "success_rate": 0.0,
                 "usage_count": 0,
+                "success_count": 0,
                 "parameters": parameters or {},
                 "tags": tags or [],
                 "last_used": None,
@@ -163,8 +212,9 @@ Version: 1
             # Read skill code
             code = skill_file.read_text()
 
-            # Create execution namespace
-            namespace = {}
+            # Create a restricted execution namespace (no open/eval/exec,
+            # only a small allowlist of stdlib imports)
+            namespace = _build_restricted_namespace()
 
             # Execute skill code to load function
             exec(code, namespace)
@@ -181,7 +231,9 @@ Version: 1
             # Update metadata
             meta = self.metadata[name]
             meta['usage_count'] += 1
+            meta['success_count'] = meta.get('success_count', 0) + 1
             meta['last_used'] = datetime.now().isoformat()
+            meta['success_rate'] = meta['success_count'] / meta['usage_count']
             self._save_metadata()
 
             return str(result)
@@ -190,14 +242,9 @@ Version: 1
             # Track failure
             meta = self.metadata[name]
             meta['usage_count'] += 1
+            meta.setdefault('success_count', 0)
             meta['last_used'] = datetime.now().isoformat()
-
-            # Calculate success rate
-            if meta['usage_count'] > 0:
-                # Assume previous attempts were successful for simplicity
-                successes = meta['usage_count'] - 1
-                meta['success_rate'] = successes / meta['usage_count']
-
+            meta['success_rate'] = meta['success_count'] / meta['usage_count']
             self._save_metadata()
 
             return f"Error executing skill '{name}': {e}"

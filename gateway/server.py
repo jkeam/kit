@@ -11,6 +11,7 @@ Handles:
 from dotenv import load_dotenv
 load_dotenv()
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, Set
 from pathlib import Path
+from datetime import datetime, timezone
 import uvicorn
 import json
 import asyncio
@@ -25,6 +27,11 @@ import asyncio
 import os
 from gateway.session_manager import SessionManager
 from gateway.scheduler import run_scheduler
+
+
+def _now() -> str:
+    """Wall-clock UTC timestamp for event payloads (not monotonic time)."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 # Request/Response models
@@ -52,27 +59,6 @@ class SessionStats(BaseModel):
     last_active: str
     message_count: int
 
-
-# Create FastAPI app
-app = FastAPI(
-    title="Kit Gateway",
-    description="Gateway for Kit - Your AI Toolkit",
-    version="0.1.0"
-)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Mount static files for web UI
-web_dir = Path(__file__).parent.parent / "web"
-if web_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(web_dir)), name="static")
 
 # Global session manager (initialized on startup)
 session_manager: Optional[SessionManager] = None
@@ -106,9 +92,9 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize gateway on startup."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize gateway on startup, clean up on shutdown."""
     global session_manager
     base_url = os.environ.get("LLM_BASE_URL", "http://localhost:8321")
     model = os.environ.get("LLM_MODEL", "redhat-maas/qwen3-14b")
@@ -123,17 +109,45 @@ async def startup_event():
         llm_api_key=api_key,
         llm_extra_headers=extra_headers
     )
-    asyncio.create_task(run_scheduler(session_manager, manager))
+    scheduler_task = asyncio.create_task(run_scheduler(session_manager, manager))
     print("✅ Gateway server started")
     print(f"🤖 LLM: {model} at {base_url} (provider={provider})")
     print("⏰ Scheduler running (60s check interval)")
     print("📡 Ready to handle multi-platform requests")
 
+    yield
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown."""
+    scheduler_task.cancel()
     print("🛑 Gateway server shutting down")
+
+
+# Create FastAPI app
+app = FastAPI(
+    title="Kit Gateway",
+    description="Gateway for Kit - Your AI Toolkit",
+    version="0.1.0",
+    lifespan=lifespan
+)
+
+# Add CORS middleware. Defaults to "*" for local/dev use; set CORS_ORIGINS to
+# a comma-separated list of origins to restrict this in production.
+_cors_origins_raw = os.environ.get("CORS_ORIGINS", "*")
+_cors_origins = (
+    ["*"] if _cors_origins_raw.strip() == "*"
+    else [origin.strip() for origin in _cors_origins_raw.split(",") if origin.strip()]
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files for web UI
+web_dir = Path(__file__).parent.parent / "web"
+if web_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(web_dir)), name="static")
 
 
 @app.get("/")
@@ -177,11 +191,11 @@ async def chat(request: ChatRequest):
             "session_id": session_id,
             "platform": request.platform,
             "message": request.message,
-            "timestamp": asyncio.get_event_loop().time()
+            "timestamp": _now()
         })
 
         # Send message through session manager
-        response = session_manager.send_message(
+        response = await session_manager.send_message(
             platform=request.platform,
             user_id=request.user_id,
             message=request.message
@@ -199,7 +213,7 @@ async def chat(request: ChatRequest):
             "platform": request.platform,
             "message": response,
             "message_count": stats["message_count"] if stats else 0,
-            "timestamp": asyncio.get_event_loop().time()
+            "timestamp": _now()
         })
 
         return ChatResponse(
@@ -318,7 +332,7 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.send_json({
             "type": "connected",
             "message": "Connected to Kit Gateway",
-            "timestamp": asyncio.get_event_loop().time()
+            "timestamp": _now()
         })
 
         # Listen for messages
@@ -332,7 +346,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if msg_type == "ping":
                     await websocket.send_json({
                         "type": "pong",
-                        "timestamp": asyncio.get_event_loop().time()
+                        "timestamp": _now()
                     })
 
                 elif msg_type == "subscribe":
@@ -354,7 +368,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "session_id": session_id,
                         "platform": platform,
                         "message": user_msg,
-                        "timestamp": asyncio.get_event_loop().time(),
+                        "timestamp": _now(),
                     })
 
                     try:
@@ -364,7 +378,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             await websocket.send_json({
                                 **event,
                                 "session_id": session_id,
-                                "timestamp": asyncio.get_event_loop().time(),
+                                "timestamp": _now(),
                             })
 
                             if event["type"] == "stream_end":
@@ -377,14 +391,14 @@ async def websocket_endpoint(websocket: WebSocket):
                                     "platform": platform,
                                     "message": assistant_content,
                                     "message_count": stats["message_count"] if stats else 0,
-                                    "timestamp": asyncio.get_event_loop().time(),
+                                    "timestamp": _now(),
                                 })
                     except Exception as e:
                         await websocket.send_json({
                             "type": "stream_error",
                             "session_id": session_id,
                             "error": str(e),
-                            "timestamp": asyncio.get_event_loop().time(),
+                            "timestamp": _now(),
                         })
 
             except json.JSONDecodeError:

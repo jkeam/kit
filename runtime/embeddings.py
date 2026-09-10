@@ -32,11 +32,15 @@ class EmbeddingsManager:
         self.workspace_dir = Path(workspace_dir)
         self.model_name = model_name
 
-        # Initialize ChromaDB (in-memory for Phase 3)
-        self.client = chromadb.Client(Settings(
-            anonymized_telemetry=False,
-            allow_reset=True
-        ))
+        # Initialize ChromaDB with on-disk persistence so embeddings survive
+        # a restart instead of requiring a full re-index every time.
+        self.client = chromadb.PersistentClient(
+            path=str(self.workspace_dir / "chroma"),
+            settings=Settings(
+                anonymized_telemetry=False,
+                allow_reset=True
+            )
+        )
 
         # Get or create collection
         self.collection = self.client.get_or_create_collection(

@@ -4,11 +4,12 @@ Agent Runtime - orchestrates LLM calls, tool execution, and memory.
 This integrates with LlamaStack (soon OGX) which handles the ReAct loop.
 """
 
+import asyncio
 import json
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Generator
-from llama_stack_client import LlamaStackClient
-from openai import OpenAI
+from typing import Dict, Any, List, Optional, AsyncGenerator
+from llama_stack_client import AsyncLlamaStackClient
+from openai import AsyncOpenAI
 
 from runtime.memory import MemoryManager
 from runtime.embeddings import EmbeddingsManager
@@ -34,6 +35,7 @@ class PersonalAssistant:
         provider: str = "llamastack",
         api_key: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
+        embeddings: Optional[EmbeddingsManager] = None,
     ):
         """
         Initialize the assistant.
@@ -43,32 +45,39 @@ class PersonalAssistant:
             model: Model ID to use
             workspace_dir: Workspace directory for memory files
             use_embeddings: Enable vector embeddings for semantic search
+                (ignored if `embeddings` is provided)
             provider: "llamastack" (default) or an OpenAI-compatible
                 provider such as "ollama" or "openai"
             api_key: API key for OpenAI-compatible providers that require one
                 (e.g. OpenCode Zen). Not needed for LlamaStack or Ollama.
             extra_headers: Extra HTTP headers sent with every LLM request
                 (e.g. {"x-opencode-session": "..."} for OpenCode Zen).
+            embeddings: A pre-built EmbeddingsManager to share across
+                multiple PersonalAssistant instances (e.g. one per session).
+                Avoids loading a separate SentenceTransformer model per
+                session. If omitted, one is created per `use_embeddings`.
         """
         if provider in OPENAI_COMPATIBLE_PROVIDERS:
             # Any OpenAI-compatible endpoint (Ollama's /v1 endpoint, OpenCode
             # Zen, OpenAI itself, etc.) speaks the standard chat-completions
             # API used below.
-            self.client = OpenAI(
+            self.client = AsyncOpenAI(
                 base_url=base_url,
                 api_key=api_key or "not-needed",
                 default_headers=extra_headers,
             )
         else:
-            self.client = LlamaStackClient(base_url=base_url, default_headers=extra_headers)
+            self.client = AsyncLlamaStackClient(base_url=base_url, default_headers=extra_headers)
         self.provider = provider
         self.model = model
         self.workspace_dir = Path(workspace_dir)
         self.memory = MemoryManager(workspace_dir)
 
-        # Initialize embeddings (Phase 3)
-        self.embeddings: Optional[EmbeddingsManager] = None
-        if use_embeddings:
+        # Initialize embeddings (Phase 3). Prefer a shared instance (passed
+        # in by SessionManager) over creating a new SentenceTransformer per
+        # session.
+        self.embeddings: Optional[EmbeddingsManager] = embeddings
+        if self.embeddings is None and use_embeddings:
             try:
                 self.embeddings = EmbeddingsManager(workspace_dir)
                 self.embeddings.index_workspace()
@@ -112,7 +121,9 @@ class PersonalAssistant:
 
     def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
         """Execute a tool call and return the result as a string."""
-        if tool_name == "memory_search" and self.embeddings:
+        if tool_name == "memory_search":
+            if not self.embeddings:
+                return "Error: memory_search requires embeddings to be initialized"
             query = tool_args.get("query", "")
             n_results = tool_args.get("n_results", 3)
             search_results = self.embeddings.search(query, n_results)
@@ -155,19 +166,19 @@ class PersonalAssistant:
 
         return execute_tool(tool_name, tool_args)
 
-    def chat(self, user_message: str) -> str:
+    async def chat(self, user_message: str) -> str:
         """
         Send a message and get a complete response (non-streaming).
         """
         full_response = ""
-        for event in self.chat_stream(user_message):
+        async for event in self.chat_stream(user_message):
             if event["type"] == "stream_end":
                 full_response = event["content"]
             elif event["type"] == "stream_error":
                 full_response = f"Error: {event['error']}"
         return full_response
 
-    def chat_stream(self, user_message: str) -> Generator[Dict[str, Any], None, None]:
+    async def chat_stream(self, user_message: str) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Send a message and yield streaming events.
 
@@ -191,7 +202,7 @@ class PersonalAssistant:
             all_content_parts: list[str] = []
 
             for _round in range(MAX_TOOL_ROUNDS):
-                stream = self.client.chat.completions.create(
+                stream = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     tools=TOOLS,
@@ -202,7 +213,7 @@ class PersonalAssistant:
                 tool_calls_acc: dict[int, dict] = {}
                 finish_reason = None
 
-                for chunk in stream:
+                async for chunk in stream:
                     if not chunk.choices:
                         continue
                     choice = chunk.choices[0]
@@ -257,7 +268,10 @@ class PersonalAssistant:
                         yield {"type": "tool_call_start", "tool_name": tool_name, "tool_args": tool_args}
 
                         try:
-                            result = str(self._execute_tool(tool_name, tool_args))
+                            # Tool execution (shell, browser, skills) is
+                            # synchronous and can block for seconds; run it
+                            # in a thread so it doesn't stall the event loop.
+                            result = str(await asyncio.to_thread(self._execute_tool, tool_name, tool_args))
                         except Exception as e:
                             result = f"Error: {e}"
 

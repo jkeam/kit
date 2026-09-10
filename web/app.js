@@ -1,7 +1,10 @@
 // Personal Assistant Web UI
 
-const API_BASE = 'http://localhost:18789';
-const WS_BASE = 'ws://localhost:18789';
+// Derive from the page's own origin instead of hardcoding the gateway port,
+// so this works whether the gateway is served on 18789 (dev default) or
+// something else.
+const API_BASE = window.location.origin;
+const WS_BASE = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
 const PLATFORM = 'web';
 const USER_ID = 'browser';
 

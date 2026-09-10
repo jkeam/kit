@@ -5,8 +5,8 @@ Command-line interface for the Personal Assistant (Gateway version).
 This version communicates with the gateway server instead of calling the agent directly.
 
 Usage:
-    python cli_v2.py "Your message here"
-    python cli_v2.py --stats
+    python cli.py "Your message here"
+    python cli.py --stats
 """
 
 import sys
@@ -28,8 +28,8 @@ def main():
     if len(sys.argv) < 2:
         console.print("[red]Error:[/red] Please provide a message")
         console.print("\n[bold]Usage:[/bold]")
-        console.print("  python cli_v2.py \"Your message here\"")
-        console.print("  python cli_v2.py --stats")
+        console.print("  python cli.py \"Your message here\"")
+        console.print("  python cli.py --stats")
         sys.exit(1)
 
     arg = sys.argv[1]

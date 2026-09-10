@@ -3,6 +3,7 @@ Scheduling tools for recurring tasks.
 """
 
 import json
+import uuid
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List
@@ -31,8 +32,8 @@ def schedule_create(cron: str, task: str, description: str = "") -> str:
     else:
         schedules = []
 
-    # Create new schedule
-    schedule_id = f"sched_{len(schedules) + 1}"
+    # Create new schedule (uuid-based id avoids collisions after deletes)
+    schedule_id = f"sched_{uuid.uuid4().hex[:8]}"
     new_schedule = {
         "id": schedule_id,
         "cron": cron,

@@ -6,13 +6,13 @@ Session ID format: {platform}:{user_id}
 Example: telegram:123456789, discord:987654321, cli:local
 """
 
-import asyncio
 import json
 from pathlib import Path
 from typing import Dict, Optional, List, AsyncGenerator, Any
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from runtime.agent import PersonalAssistant
+from runtime.embeddings import EmbeddingsManager
 
 SESSIONS_DIR = Path(__file__).parent.parent / "workspace" / "sessions"
 
@@ -53,6 +53,17 @@ class SessionManager:
         self.llm_extra_headers = llm_extra_headers
         self.sessions: Dict[str, Session] = {}
 
+        # One shared embeddings manager (and SentenceTransformer model) for
+        # every session's agent, instead of loading the model once per
+        # session.
+        self.embeddings: Optional[EmbeddingsManager] = None
+        try:
+            self.embeddings = EmbeddingsManager()
+            self.embeddings.index_workspace()
+        except Exception as e:
+            print(f"Warning: Could not initialize shared embeddings: {e}")
+            print("Continuing without semantic search...")
+
     def get_session(self, platform: str, user_id: str) -> Session:
         """
         Get or create a session for a platform/user combination.
@@ -73,7 +84,8 @@ class SessionManager:
                 model=self.model,
                 provider=self.llm_provider,
                 api_key=self.llm_api_key,
-                extra_headers=self.llm_extra_headers
+                extra_headers=self.llm_extra_headers,
+                embeddings=self.embeddings
             )
 
             self.sessions[session_id] = Session(
@@ -87,7 +99,7 @@ class SessionManager:
         session.update_activity()
         return session
 
-    def send_message(self, platform: str, user_id: str, message: str) -> str:
+    async def send_message(self, platform: str, user_id: str, message: str) -> str:
         """
         Send a message to a session and get response.
 
@@ -100,21 +112,15 @@ class SessionManager:
             Agent's response
         """
         session = self.get_session(platform, user_id)
-        response = session.agent.chat(message)
+        response = await session.agent.chat(message)
         return response
 
     async def send_message_stream(
         self, platform: str, user_id: str, message: str
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Yield streaming events from the agent, running the sync generator in a thread."""
+        """Yield streaming events from the agent."""
         session = self.get_session(platform, user_id)
-        gen = session.agent.chat_stream(message)
-        loop = asyncio.get_event_loop()
-        _DONE = object()
-        while True:
-            event = await loop.run_in_executor(None, lambda: next(gen, _DONE))
-            if event is _DONE:
-                break
+        async for event in session.agent.chat_stream(message):
             yield event
 
     @staticmethod
@@ -207,5 +213,6 @@ class SessionManager:
 
         for session_id in to_remove:
             del self.sessions[session_id]
+            self.clear_messages(session_id)
 
         return len(to_remove)

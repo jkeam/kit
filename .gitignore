@@ -43,6 +43,9 @@ workspace/memory/*.md
 # Session history (user conversations)
 workspace/sessions/
 
+# Persisted vector embeddings (regenerated via embeddings.index_workspace())
+workspace/chroma/
+
 # Temporary files
 *.tmp
 *.bak
