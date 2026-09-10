@@ -13,6 +13,7 @@ from openai import AsyncOpenAI
 
 from runtime.memory import MemoryManager
 from runtime.embeddings import EmbeddingsManager
+from runtime.knowledge import KnowledgeManager
 from runtime.mcp import MCPManager, parse_mcp_tool_name
 from runtime.skills import SkillsManager
 from tools.core import TOOLS, execute_tool
@@ -124,6 +125,18 @@ class PersonalAssistant:
         # Initialize skills manager
         self.skills = SkillsManager(workspace_dir)
 
+        # Initialize per-agent knowledge manager
+        self.knowledge: Optional[KnowledgeManager] = None
+        try:
+            self.knowledge = KnowledgeManager(
+                workspace_dir=workspace_dir,
+                agent_id=agent_id or "kit",
+                embeddings=self.embeddings,
+            )
+            self.knowledge.index_all()
+        except Exception as e:
+            print(f"Warning: Could not initialize knowledge manager: {e}")
+
         # Load system prompts. soul_override lets a non-Kit team member use
         # its own persona instead of this workspace's shared SOUL.md.
         self.soul = soul_override if soul_override is not None else self._load_file("SOUL.md")
@@ -201,6 +214,13 @@ class PersonalAssistant:
         if self.soul:
             parts.append(self.soul)
 
+        if self.knowledge:
+            curated = self.knowledge.get_curated_knowledge()
+            if curated:
+                parts.append("\n\n---\n\n")
+                parts.append("# KNOWLEDGE BASE\n\n")
+                parts.append(curated)
+
         if self.agents_md:
             parts.append("\n\n---\n\n")
             parts.append(self.agents_md)
@@ -244,6 +264,40 @@ class PersonalAssistant:
                     f"(from {Path(r['source']).name})"
                 )
             return "\n\n".join(formatted) if formatted else "No relevant memories found"
+
+        if tool_name == "knowledge_search":
+            if not self.knowledge:
+                return "Error: knowledge system not initialized"
+            results = self.knowledge.search(
+                tool_args.get("query", ""),
+                tool_args.get("n_results", 3),
+            )
+            formatted = []
+            for r in results:
+                formatted.append(
+                    f"[{r['source_type']}] {r['content'][:200]}... "
+                    f"(from {Path(r['source']).name})"
+                )
+            return "\n\n".join(formatted) if formatted else "No relevant knowledge found"
+        if tool_name == "knowledge_teach":
+            if not self.knowledge:
+                return "Error: knowledge system not initialized"
+            return self.knowledge.add_fact(tool_args.get("content", ""))
+        if tool_name == "knowledge_ingest":
+            if not self.knowledge:
+                return "Error: knowledge system not initialized"
+            return self.knowledge.ingest_text(
+                tool_args.get("text", ""),
+                tool_args.get("source_name", "unnamed"),
+            )
+        if tool_name == "knowledge_list":
+            if not self.knowledge:
+                return "Error: knowledge system not initialized"
+            return self.knowledge.list_sources()
+        if tool_name == "knowledge_forget":
+            if not self.knowledge:
+                return "Error: knowledge system not initialized"
+            return self.knowledge.remove_source(tool_args.get("source_name", ""))
 
         if tool_name == "skill_create":
             params_str = tool_args.get("parameters")

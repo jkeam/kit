@@ -564,6 +564,76 @@ async def save_agent_template(template: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# --- Per-agent knowledge routes ---
+
+from runtime.knowledge import KnowledgeManager
+
+
+class KnowledgeFactRequest(BaseModel):
+    content: str
+
+
+class KnowledgeIngestRequest(BaseModel):
+    text: str
+    source_name: str
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str
+    n_results: int = 3
+
+
+def _knowledge_manager(agent_id: str) -> KnowledgeManager:
+    sm = _require_session_manager()
+    if sm.agent_registry.resolve(agent_id) is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+    return KnowledgeManager(
+        workspace_dir=str(sm.agent_registry.workspace_dir),
+        agent_id=agent_id,
+        embeddings=sm.embeddings,
+    )
+
+
+@app.get("/agents/{agent_id}/knowledge", dependencies=[Depends(_require_gateway_token)])
+async def list_knowledge_sources(agent_id: str):
+    km = _knowledge_manager(agent_id)
+    return {"sources": km.list_sources()}
+
+
+@app.get("/agents/{agent_id}/knowledge/curated", dependencies=[Depends(_require_gateway_token)])
+async def get_curated_knowledge(agent_id: str):
+    km = _knowledge_manager(agent_id)
+    return {"content": km.get_curated_knowledge()}
+
+
+@app.post("/agents/{agent_id}/knowledge/facts", dependencies=[Depends(_require_gateway_token)])
+async def add_knowledge_fact(agent_id: str, request: KnowledgeFactRequest):
+    km = _knowledge_manager(agent_id)
+    result = km.add_fact(request.content)
+    return {"message": result}
+
+
+@app.post("/agents/{agent_id}/knowledge/documents", dependencies=[Depends(_require_gateway_token)])
+async def ingest_knowledge_document(agent_id: str, request: KnowledgeIngestRequest):
+    km = _knowledge_manager(agent_id)
+    result = km.ingest_text(request.text, request.source_name)
+    return {"message": result}
+
+
+@app.post("/agents/{agent_id}/knowledge/search", dependencies=[Depends(_require_gateway_token)])
+async def search_knowledge(agent_id: str, request: KnowledgeSearchRequest):
+    km = _knowledge_manager(agent_id)
+    results = km.search(request.query, request.n_results)
+    return {"results": results}
+
+
+@app.delete("/agents/{agent_id}/knowledge/{source_name}", dependencies=[Depends(_require_gateway_token)])
+async def delete_knowledge_source(agent_id: str, source_name: str):
+    km = _knowledge_manager(agent_id)
+    result = km.remove_source(source_name)
+    return {"message": result}
+
+
 @app.get("/tools", dependencies=[Depends(_require_gateway_token)])
 async def list_tools():
     """Introspect the global tool registry - also what makes the Tools tab

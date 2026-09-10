@@ -1107,7 +1107,8 @@ textarea.form-control {
 
 .session-card,
 .schedule-card,
-.memory-item {
+.memory-item,
+.knowledge-card {
     padding: 14px;
     margin-bottom: 10px;
     background: var(--panel-bg);
@@ -1136,6 +1137,57 @@ textarea.form-control {
 .memory-item-content {
     font-size: 13.5px;
     white-space: pre-wrap;
+}
+
+/* Knowledge tab */
+
+.knowledge-modal-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+}
+
+.knowledge-forms {
+    margin-bottom: 16px;
+}
+
+.knowledge-form-section {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 0;
+}
+
+.knowledge-form-section summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.knowledge-form-section[open] summary {
+    border-bottom: 1px solid var(--border);
+}
+
+.knowledge-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+}
+
+.knowledge-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-bottom: 8px;
 }
 
 /* Tools list */

@@ -35,7 +35,6 @@
             <button class="rail-btn" data-panel="sessions" title="Sessions" aria-label="Sessions">
                 <i class="fas fa-layer-group"></i>
             </button>
-
             <div class="rail-spacer"></div>
 
             <div class="rail-status" id="connection-status" title="Disconnected">
@@ -145,6 +144,56 @@
                 <div id="sessions-tab" class="tab-content">
                     <div id="sessions-list"></div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Knowledge modal: per-agent knowledge management -->
+    <div class="workspace-overlay" id="knowledge-overlay" hidden>
+        <div class="workspace-modal">
+            <div class="workspace-modal-header">
+                <div class="workspace-tabs">
+                    <span class="knowledge-modal-title">
+                        <i class="fas fa-book"></i> <span id="knowledge-modal-agent-name">Knowledge</span>
+                    </span>
+                </div>
+                <button class="icon-action-btn" id="close-knowledge-btn" title="Close" aria-label="Close">
+                    <i class="fas fa-xmark"></i>
+                </button>
+            </div>
+            <div class="workspace-modal-body">
+                <div class="knowledge-forms">
+                    <details class="knowledge-form-section">
+                        <summary>Add a fact</summary>
+                        <div class="knowledge-form">
+                            <textarea id="knowledge-fact-input" class="form-control" placeholder="Enter a fact to always include in this agent's context..." rows="3"></textarea>
+                            <button id="knowledge-fact-btn" class="btn btn-primary">Add Fact</button>
+                        </div>
+                    </details>
+
+                    <details class="knowledge-form-section">
+                        <summary>Ingest a document</summary>
+                        <div class="knowledge-form">
+                            <input id="knowledge-doc-name" class="form-control" type="text" placeholder="Source name (e.g. openshift-install-guide)">
+                            <textarea id="knowledge-doc-text" class="form-control" placeholder="Paste document content here..." rows="5"></textarea>
+                            <button id="knowledge-doc-btn" class="btn btn-primary">Ingest Document</button>
+                        </div>
+                    </details>
+
+                    <details class="knowledge-form-section">
+                        <summary>Search knowledge</summary>
+                        <div class="knowledge-form">
+                            <div class="composer-row">
+                                <input id="knowledge-search-input" class="form-control" type="text" placeholder="Search query...">
+                                <button id="knowledge-search-btn" class="btn btn-primary">Search</button>
+                            </div>
+                            <div id="knowledge-search-results"></div>
+                        </div>
+                    </details>
+                </div>
+
+                <div class="knowledge-section-label">Sources</div>
+                <div id="knowledge-list"></div>
             </div>
         </div>
     </div>

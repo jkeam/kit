@@ -8,7 +8,7 @@ import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import hashlib
 
 
@@ -56,6 +56,20 @@ class EmbeddingsManager:
         # Track indexed files
         self.indexed_files: Dict[str, str] = {}  # path -> content_hash
 
+        # Cache named collections to avoid repeated get_or_create_collection calls
+        self._collections: Dict[str, Any] = {}
+
+    def _get_collection(self, name: Optional[str] = None):
+        """Get a ChromaDB collection by name, or the default collection."""
+        if name is None:
+            return self.collection
+        if name not in self._collections:
+            self._collections[name] = self.client.get_or_create_collection(
+                name=name,
+                metadata={"description": f"Embeddings for {name}"}
+            )
+        return self._collections[name]
+
     def _get_file_hash(self, file_path: Path) -> str:
         """Get MD5 hash of file contents."""
         if not file_path.exists():
@@ -91,13 +105,14 @@ class EmbeddingsManager:
 
         return [c for c in chunks if c.strip()]
 
-    def index_file(self, file_path: Path, source_type: str = "memory"):
+    def index_file(self, file_path: Path, source_type: str = "memory", collection_name: Optional[str] = None):
         """
         Index a file for semantic search.
 
         Args:
             file_path: Path to file
             source_type: Type of file (memory, daily_log, skill)
+            collection_name: Target collection (None = default)
         """
         if not file_path.exists():
             return
@@ -119,8 +134,9 @@ class EmbeddingsManager:
         # the new count would otherwise linger in the collection forever,
         # still searchable via memory_search despite no longer existing on
         # disk.
+        collection = self._get_collection(collection_name)
         try:
-            self.collection.delete(where={"source": file_key})
+            collection.delete(where={"source": file_key})
         except Exception:
             pass
 
@@ -146,7 +162,7 @@ class EmbeddingsManager:
         ]
 
         # Add to collection (upsert to handle updates)
-        self.collection.upsert(
+        collection.upsert(
             ids=ids,
             embeddings=embeddings,
             documents=chunks,
@@ -175,22 +191,25 @@ class EmbeddingsManager:
             for skill_file in skills_dir.glob("*.py"):
                 self.index_file(skill_file, "skill")
 
-    def search(self, query: str, n_results: int = 3) -> List[Dict[str, Any]]:
+    def search(self, query: str, n_results: int = 3, collection_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Semantic search over memories.
 
         Args:
             query: Search query
             n_results: Number of results to return
+            collection_name: Target collection (None = default)
 
         Returns:
             List of matching memory chunks with metadata
         """
+        collection = self._get_collection(collection_name)
+
         # Generate query embedding
         query_embedding = self.model.encode(query).tolist()
 
         # Search
-        results = self.collection.query(
+        results = collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results
         )

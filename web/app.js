@@ -106,6 +106,12 @@ const closeDetailsBtn = document.getElementById('close-details-btn');
 const workspaceOverlay = document.getElementById('workspace-overlay');
 const closeWorkspaceBtn = document.getElementById('close-workspace-btn');
 
+const knowledgeOverlay = document.getElementById('knowledge-overlay');
+const knowledgeList = document.getElementById('knowledge-list');
+const knowledgeModalAgentName = document.getElementById('knowledge-modal-agent-name');
+const closeKnowledgeBtn = document.getElementById('close-knowledge-btn');
+let knowledgeAgentId = null;
+
 // Latest known status per agent_id ({status, current_task, updated_at}),
 // seeded from GET /agents/status and kept live via `agent_status` WS events.
 let agentStatuses = {};
@@ -944,6 +950,14 @@ async function renderMemberDetails(agentId) {
 
     html += `
         <div class="details-section">
+            <div class="details-section-label">Knowledge</div>
+            <p style="font-size:13px;color:var(--text-secondary);margin:0 0 8px;">Curated facts and documents for this agent.</p>
+            <button class="btn btn-secondary" id="details-knowledge-btn">Manage Knowledge</button>
+        </div>
+    `;
+
+    html += `
+        <div class="details-section">
             <div class="details-section-label">MCP Servers</div>
             <div id="details-mcp-list"></div>
         </div>
@@ -1006,6 +1020,13 @@ async function renderMemberDetails(agentId) {
             if (e.key === 'Enter') { e.preventDefault(); searchDetailsMemory(); }
         });
     }
+    const detailsKnowledgeBtn = document.getElementById('details-knowledge-btn');
+    if (detailsKnowledgeBtn) {
+        detailsKnowledgeBtn.addEventListener('click', () => {
+            openKnowledgeForAgent(agentId);
+        });
+    }
+
     renderMcpReadonly('details-mcp-list', agent.mcp_servers);
     loadDetailsTools(agentId);
     loadDetailsSkills(agentId);
@@ -1826,6 +1847,151 @@ async function loadSchedules() {
 }
 
 refreshSchedulesBtn.addEventListener('click', loadSchedules);
+
+
+// --- Knowledge modal ---
+
+function openKnowledgeForAgent(agentId) {
+    knowledgeAgentId = agentId;
+    const agent = agentsById[agentId];
+    const label = agent ? `${agent.name} — Knowledge` : `${agentId} — Knowledge`;
+    if (knowledgeModalAgentName) knowledgeModalAgentName.textContent = label;
+    knowledgeOverlay.hidden = false;
+    loadKnowledge();
+}
+
+function closeKnowledgeModal() {
+    knowledgeOverlay.hidden = true;
+    knowledgeAgentId = null;
+}
+
+async function loadKnowledge() {
+    if (!knowledgeAgentId) return;
+    knowledgeList.innerHTML = '<div class="spinner"></div>';
+
+    try {
+        const response = await apiFetch(`${API_BASE}/agents/${encodeURIComponent(knowledgeAgentId)}/knowledge`);
+        if (!response.ok) throw new Error('Failed to load knowledge sources');
+        const data = await response.json();
+
+        if (!data.sources || data.sources.startsWith('No knowledge sources')) {
+            knowledgeList.innerHTML = '<p class="empty-state">No knowledge sources yet</p>';
+            return;
+        }
+
+        knowledgeList.innerHTML = `<div class="knowledge-card"><pre style="white-space:pre-wrap;font-size:13px;margin:0;color:var(--text-secondary);">${escapeHtml(data.sources)}</pre></div>`;
+    } catch (error) {
+        knowledgeList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
+    }
+}
+
+async function addKnowledgeFact() {
+    const input = document.getElementById('knowledge-fact-input');
+    const btn = document.getElementById('knowledge-fact-btn');
+    const content = input.value.trim();
+    if (!content || !knowledgeAgentId) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Adding...';
+    try {
+        const response = await apiFetch(`${API_BASE}/agents/${encodeURIComponent(knowledgeAgentId)}/knowledge/facts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content }),
+        });
+        if (!response.ok) throw new Error('Failed to add fact');
+        input.value = '';
+        await loadKnowledge();
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Add Fact';
+    }
+}
+
+async function ingestKnowledgeDoc() {
+    const nameInput = document.getElementById('knowledge-doc-name');
+    const textInput = document.getElementById('knowledge-doc-text');
+    const btn = document.getElementById('knowledge-doc-btn');
+    const sourceName = nameInput.value.trim();
+    const text = textInput.value.trim();
+    if (!sourceName || !text || !knowledgeAgentId) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Ingesting...';
+    try {
+        const response = await apiFetch(`${API_BASE}/agents/${encodeURIComponent(knowledgeAgentId)}/knowledge/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, source_name: sourceName }),
+        });
+        if (!response.ok) throw new Error('Failed to ingest document');
+        nameInput.value = '';
+        textInput.value = '';
+        await loadKnowledge();
+    } catch (error) {
+        alert(`Error: ${error.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Ingest Document';
+    }
+}
+
+async function searchKnowledge() {
+    const input = document.getElementById('knowledge-search-input');
+    const btn = document.getElementById('knowledge-search-btn');
+    const results = document.getElementById('knowledge-search-results');
+    const query = input.value.trim();
+    if (!query || !knowledgeAgentId) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Searching...';
+    results.innerHTML = '<div class="spinner"></div>';
+    try {
+        const response = await apiFetch(`${API_BASE}/agents/${encodeURIComponent(knowledgeAgentId)}/knowledge/search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query }),
+        });
+        if (!response.ok) throw new Error('Failed to search knowledge');
+        const data = await response.json();
+
+        if (!data.results || data.results.length === 0) {
+            results.innerHTML = '<div class="empty-state" style="padding:10px 0;">No results found</div>';
+            return;
+        }
+
+        results.innerHTML = data.results.map(r => `
+            <div class="knowledge-card">
+                <div style="font-size:11px;color:var(--text-tertiary);margin-bottom:4px;">
+                    ${escapeHtml(r.source_type)} &middot; similarity: ${(r.similarity * 100).toFixed(0)}%
+                </div>
+                <div style="font-size:13px;color:var(--text-secondary);">${escapeHtml(r.content)}</div>
+            </div>
+        `).join('');
+    } catch (error) {
+        results.innerHTML = `<div class="empty-state" style="padding:10px 0;">Error: ${escapeHtml(error.message)}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Search';
+    }
+}
+
+// Knowledge modal event listeners
+closeKnowledgeBtn.addEventListener('click', closeKnowledgeModal);
+knowledgeOverlay.addEventListener('click', (e) => {
+    if (e.target === knowledgeOverlay) closeKnowledgeModal();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !knowledgeOverlay.hidden) closeKnowledgeModal();
+});
+document.getElementById('knowledge-fact-btn')?.addEventListener('click', addKnowledgeFact);
+document.getElementById('knowledge-doc-btn')?.addEventListener('click', ingestKnowledgeDoc);
+document.getElementById('knowledge-search-btn')?.addEventListener('click', searchKnowledge);
+document.getElementById('knowledge-search-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') searchKnowledge();
+});
 
 
 // WebSocket connection

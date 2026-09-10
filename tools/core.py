@@ -17,6 +17,7 @@ from tools.browser import BROWSER_TOOLS, BROWSER_TOOL_FUNCTIONS
 from tools.scheduler import SCHEDULER_TOOLS, SCHEDULER_TOOL_FUNCTIONS
 from tools.skills import SKILLS_TOOLS, SKILLS_TOOL_FUNCTIONS
 from tools.delegation import DELEGATION_TOOLS, DELEGATION_TOOL_FUNCTIONS
+from tools.knowledge import KNOWLEDGE_TOOLS, KNOWLEDGE_TOOL_FUNCTIONS
 from env_config import env_int
 
 WORKSPACE_ROOT = Path("workspace").resolve()
@@ -378,7 +379,7 @@ CORE_TOOLS = [
 # runtime/agent.py's allowed_tools filtering) - being in this global list
 # doesn't hand it to every agent, only to whichever ones have it in their
 # own configured tool allowlist (Kit does, by default).
-TOOLS = CORE_TOOLS + WEB_TOOLS + BROWSER_TOOLS + SCHEDULER_TOOLS + SKILLS_TOOLS + DELEGATION_TOOLS
+TOOLS = CORE_TOOLS + WEB_TOOLS + BROWSER_TOOLS + SCHEDULER_TOOLS + SKILLS_TOOLS + DELEGATION_TOOLS + KNOWLEDGE_TOOLS
 
 
 # Map function names to implementations
@@ -398,7 +399,8 @@ TOOL_FUNCTIONS = {
     **BROWSER_TOOL_FUNCTIONS,
     **SCHEDULER_TOOL_FUNCTIONS,
     **SKILLS_TOOL_FUNCTIONS,
-    **DELEGATION_TOOL_FUNCTIONS
+    **DELEGATION_TOOL_FUNCTIONS,
+    **KNOWLEDGE_TOOL_FUNCTIONS,
 }
 
 
