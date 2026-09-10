@@ -4,12 +4,18 @@ Browser automation tools using Playwright.
 
 from pathlib import Path
 from typing import Optional
+import os
 import subprocess
 import sys
 
 # Fixed helper scripts, invoked with untrusted values passed as real argv
 # entries (never interpolated into Python source) to avoid code injection.
 _SCRIPTS_DIR = Path(__file__).parent / "_browser_scripts"
+
+# Subprocess wall-clock budget; the scripts themselves read
+# BROWSER_NAV_TIMEOUT_MS (inherited from this process's env) for the
+# Playwright page.goto timeout, which should stay comfortably under this.
+BROWSER_SUBPROCESS_TIMEOUT_SECONDS = int(os.environ.get("BROWSER_SUBPROCESS_TIMEOUT_SECONDS", "60"))
 
 
 def browser_screenshot(url: str, output_path: str = "workspace/screenshot.png") -> str:
@@ -29,7 +35,7 @@ def browser_screenshot(url: str, output_path: str = "workspace/screenshot.png") 
             [sys.executable, str(_SCRIPTS_DIR / "screenshot.py"), url, output_path],
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=BROWSER_SUBPROCESS_TIMEOUT_SECONDS
         )
 
         if result.returncode != 0:
@@ -57,7 +63,7 @@ def browser_navigate(url: str, actions: str) -> str:
             [sys.executable, str(_SCRIPTS_DIR / "navigate.py"), url],
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=BROWSER_SUBPROCESS_TIMEOUT_SECONDS
         )
 
         if result.returncode != 0:
@@ -88,7 +94,7 @@ def browser_extract(url: str, selector: str) -> str:
             [sys.executable, str(_SCRIPTS_DIR / "extract.py"), url, selector],
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=BROWSER_SUBPROCESS_TIMEOUT_SECONDS
         )
 
         if result.returncode != 0:

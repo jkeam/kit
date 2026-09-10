@@ -20,6 +20,7 @@ from tools.skills import SKILLS_TOOLS, SKILLS_TOOL_FUNCTIONS
 WORKSPACE_ROOT = Path("workspace").resolve()
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SHELL_METACHARACTERS_RE = re.compile(r'[&|;`$<>]')
+SHELL_EXEC_TIMEOUT_SECONDS = int(os.environ.get("SHELL_EXEC_TIMEOUT_SECONDS", "30"))
 
 
 def read(path: str) -> str:
@@ -163,7 +164,7 @@ def exec_shell(command: str) -> str:
             shell=False,
             capture_output=True,
             text=True,
-            timeout=30,  # 30 second timeout
+            timeout=SHELL_EXEC_TIMEOUT_SECONDS,
             cwd=os.getcwd()
         )
 

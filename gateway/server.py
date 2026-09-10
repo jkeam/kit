@@ -166,6 +166,15 @@ async def health_check():
     }
 
 
+@app.get("/config")
+async def get_config():
+    """Runtime-tunable settings the web UI reads on load, so they can be
+    changed via env vars without editing static JS."""
+    return {
+        "ws_max_reconnect_attempts": int(os.environ.get("WS_MAX_RECONNECT_ATTEMPTS", "5")),
+    }
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
@@ -426,4 +435,7 @@ def start_server(host: str = "127.0.0.1", port: int = 18789):
 
 
 if __name__ == "__main__":
-    start_server()
+    start_server(
+        host=os.environ.get("GATEWAY_HOST", "127.0.0.1"),
+        port=int(os.environ.get("GATEWAY_PORT", "18789")),
+    )

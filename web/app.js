@@ -11,7 +11,9 @@ const USER_ID = 'browser';
 let messageCount = 0;
 let ws = null;
 let wsReconnectAttempts = 0;
-const WS_MAX_RECONNECT_ATTEMPTS = 5;
+// Default; overwritten from GET /config on init() so it can be tuned
+// server-side (WS_MAX_RECONNECT_ATTEMPTS env var) without editing this file.
+let wsMaxReconnectAttempts = 5;
 
 // Streaming state
 let streamingMessageDiv = null;
@@ -422,7 +424,7 @@ function connectWebSocket() {
             console.log('WebSocket disconnected');
 
             // Attempt reconnect
-            if (wsReconnectAttempts < WS_MAX_RECONNECT_ATTEMPTS) {
+            if (wsReconnectAttempts < wsMaxReconnectAttempts) {
                 wsReconnectAttempts++;
                 setTimeout(connectWebSocket, 2000 * wsReconnectAttempts);
             }
@@ -618,6 +620,18 @@ async function loadChatHistory() {
 
 // Initialize
 async function init() {
+    try {
+        const res = await fetch(`${API_BASE}/config`);
+        if (res.ok) {
+            const config = await res.json();
+            if (typeof config.ws_max_reconnect_attempts === 'number') {
+                wsMaxReconnectAttempts = config.ws_max_reconnect_attempts;
+            }
+        }
+    } catch (error) {
+        console.warn('Failed to load /config, using defaults:', error);
+    }
+
     const connected = await checkConnection();
 
     if (connected) {
@@ -626,7 +640,7 @@ async function init() {
         loadSessions();
         connectWebSocket();
     } else {
-        addMessage('Failed to connect to gateway. Make sure it\'s running on port 18789.', 'system');
+        addMessage(`Failed to connect to gateway. Make sure it's running at ${API_BASE}.`, 'system');
     }
 
     // Check connection every 10 seconds

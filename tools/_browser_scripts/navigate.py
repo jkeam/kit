@@ -1,9 +1,12 @@
 """Fixed helper script for browser_navigate. Run as a subprocess with
 argv = [url] so values are never interpolated into source code.
 """
+import os
 import sys
 
 from playwright.sync_api import sync_playwright
+
+NAV_TIMEOUT_MS = int(os.environ.get("BROWSER_NAV_TIMEOUT_MS", "30000"))
 
 
 def main() -> None:
@@ -12,7 +15,7 @@ def main() -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto(url, wait_until="networkidle", timeout=30000)
+        page.goto(url, wait_until="networkidle", timeout=NAV_TIMEOUT_MS)
 
         title = page.title()
         url_after = page.url

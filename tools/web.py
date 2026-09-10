@@ -8,6 +8,8 @@ from tavily import TavilyClient
 import html2text
 import httpx
 
+WEB_FETCH_TIMEOUT_SECONDS = float(os.environ.get("WEB_FETCH_TIMEOUT_SECONDS", "30.0"))
+
 
 def web_search(query: str, max_results: int = 5) -> str:
     """
@@ -63,7 +65,7 @@ def web_fetch(url: str, max_chars: int = 10000) -> str:
         response = httpx.get(
             url,
             follow_redirects=True,
-            timeout=30.0,
+            timeout=WEB_FETCH_TIMEOUT_SECONDS,
             headers={
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
             }

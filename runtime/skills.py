@@ -7,6 +7,7 @@ from repeated patterns or explicit requests.
 
 import builtins
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +16,7 @@ from datetime import datetime
 import hashlib
 
 _RUNNER_SCRIPT = Path(__file__).parent / "_skill_scripts" / "run_skill.py"
-_SKILL_TIMEOUT_SECONDS = 60
+_SKILL_TIMEOUT_SECONDS = int(os.environ.get("SKILL_TIMEOUT_SECONDS", "60"))
 
 # Modules a skill is allowed to import. Keeps skills useful for the kind of
 # small data-transformation tasks they're meant for, without handing them

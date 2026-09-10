@@ -1,4 +1,7 @@
 # Gateway Configuration
+# NOTE: port/auth_token here are documentation only — the running server
+# reads GATEWAY_PORT / GATEWAY_HOST / GATEWAY_TOKEN from the environment
+# (see .env.example), not this file. Keep this in sync if you change those.
 gateway:
   port: 18789
   auth_token: ${GATEWAY_TOKEN}  # Optional, set in .env
