@@ -69,6 +69,39 @@ const skillsList = document.getElementById('skills-list');
 const personaEditor = document.getElementById('persona-editor');
 const savePersonaBtn = document.getElementById('save-persona');
 const personaStatus = document.getElementById('persona-status');
+const toggleInfoPanelBtn = document.getElementById('toggle-info-panel');
+const chatPanelCol = document.getElementById('chat-panel-col');
+const infoPanelCol = document.getElementById('info-panel-col');
+
+// Info panel visibility (tools/sessions/memory/schedules/skills/persona).
+// The human user doesn't always need to see what the agent has access to,
+// so it can be tucked away; state persists per-browser via localStorage.
+const INFO_PANEL_HIDDEN_KEY = 'kit_info_panel_hidden';
+
+function setInfoPanelHidden(hidden) {
+    infoPanelCol.hidden = hidden;
+    chatPanelCol.classList.toggle('pf-m-6-col', !hidden);
+    chatPanelCol.classList.toggle('pf-m-12-col', hidden);
+    toggleInfoPanelBtn.setAttribute('aria-expanded', String(!hidden));
+    toggleInfoPanelBtn.classList.toggle('pf-m-active', !hidden);
+    try {
+        localStorage.setItem(INFO_PANEL_HIDDEN_KEY, hidden ? '1' : '0');
+    } catch (error) {
+        // localStorage unavailable - just won't persist across reloads.
+    }
+}
+
+let infoPanelHidden = false;
+try {
+    infoPanelHidden = localStorage.getItem(INFO_PANEL_HIDDEN_KEY) === '1';
+} catch (error) {
+    // ignore
+}
+setInfoPanelHidden(infoPanelHidden);
+
+toggleInfoPanelBtn.addEventListener('click', () => {
+    setInfoPanelHidden(!infoPanelCol.hidden);
+});
 
 // Tab switching
 document.querySelectorAll('.pf-v5-c-tabs__link').forEach(btn => {

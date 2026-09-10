@@ -11,6 +11,10 @@
     justify-content: flex-end;
 }
 
+#toggle-info-panel.pf-m-active {
+    color: var(--pf-v5-global--active-color--100);
+}
+
 /* Brand */
 .brand-link {
     display: inline-flex;
