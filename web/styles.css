@@ -1440,3 +1440,69 @@ textarea.form-control {
         border-radius: 0;
     }
 }
+
+/* MCP server editor */
+.mcp-entry {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: var(--main-bg);
+}
+.mcp-entry-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.mcp-entry-header input {
+    flex: 1;
+    font-weight: 600;
+}
+.mcp-entry-remove {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+}
+.mcp-entry-remove:hover {
+    color: var(--accent);
+}
+.mcp-entry .form-group {
+    margin-bottom: 6px;
+}
+.mcp-entry .form-label {
+    font-size: 11.5px;
+    margin-bottom: 2px;
+}
+.mcp-entry textarea.form-control {
+    min-height: 48px;
+    font-size: 12px;
+}
+.mcp-add-btn {
+    font-size: 12.5px;
+    margin-top: 4px;
+}
+.mcp-readonly-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.mcp-readonly-item {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 13px;
+}
+.mcp-readonly-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.mcp-readonly-cmd {
+    color: var(--text-tertiary);
+    font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-size: 12px;
+}

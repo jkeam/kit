@@ -34,6 +34,7 @@ class AgentDefinition:
     soul: str
     model: Optional[str] = None
     provider: Optional[str] = None
+    mcp_servers: Optional[Dict[str, dict]] = None
 
     @property
     def allowed_tools(self) -> Optional[set]:
@@ -139,6 +140,7 @@ class AgentRegistry:
             soul=soul,
             model=meta.get("model"),
             provider=meta.get("provider"),
+            mcp_servers=meta.get("mcp_servers"),
         )
 
     def list_agents(self) -> List[AgentDefinition]:
@@ -162,6 +164,7 @@ class AgentRegistry:
         soul_overrides: Optional[str] = None,
         model: Optional[str] = None,
         provider: Optional[str] = None,
+        mcp_servers: Optional[Dict[str, dict]] = None,
     ) -> AgentDefinition:
         if id == KIT_AGENT_ID:
             raise ValueError("'kit' is reserved for the built-in manager agent")
@@ -179,6 +182,8 @@ class AgentRegistry:
         self._raise_if_unknown(tools, self.validate_tools, "tool")
         self._raise_if_unknown(skills, self.validate_skills, "skill")
 
+        mcp = mcp_servers if mcp_servers is not None else template.get("mcp_servers")
+
         meta = {
             "id": id,
             "name": name or template.get("name", id),
@@ -191,6 +196,8 @@ class AgentRegistry:
             meta["model"] = model
         if provider is not None:
             meta["provider"] = provider
+        if mcp:
+            meta["mcp_servers"] = mcp
         self._agent_meta_path(id).write_text(json.dumps(meta, indent=2))
 
         soul_path = self._agent_soul_path(id)
@@ -209,6 +216,7 @@ class AgentRegistry:
         soul: Optional[str] = None,
         model: Optional[str] = None,
         provider: Optional[str] = None,
+        mcp_servers: Optional[Dict[str, dict]] = None,
     ) -> AgentDefinition:
         if id == KIT_AGENT_ID:
             raise ValueError("'kit' cannot be edited via update_agent - edit workspace/SOUL.md directly")
@@ -231,6 +239,8 @@ class AgentRegistry:
             meta["model"] = model if model else None
         if provider is not None:
             meta["provider"] = provider if provider else None
+        if mcp_servers is not None:
+            meta["mcp_servers"] = mcp_servers if mcp_servers else None
 
         path.write_text(json.dumps(meta, indent=2))
 

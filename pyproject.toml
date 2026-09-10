@@ -36,6 +36,9 @@ dependencies = [
     "python-telegram-bot>=21.0",
     "discord.py>=2.0",
 
+    # MCP (Model Context Protocol) client
+    "mcp>=1.0.0",
+
     # Utilities
     "pyyaml>=6.0",
     "python-dotenv>=1.2.0",

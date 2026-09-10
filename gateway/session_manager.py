@@ -142,6 +142,7 @@ class SessionManager:
                 session_manager=self,
                 platform=platform,
                 user_id=user_id,
+                mcp_servers=defn.mcp_servers,
             )
 
             self.sessions[session_id] = Session(

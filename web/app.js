@@ -937,6 +937,13 @@ async function renderMemberDetails(agentId) {
 
     html += `
         <div class="details-section">
+            <div class="details-section-label">MCP Servers</div>
+            <div id="details-mcp-list"></div>
+        </div>
+    `;
+
+    html += `
+        <div class="details-section">
             <div class="details-section-label">Model</div>
             <p class="details-meta-row"><strong>Model:</strong> ${escapeHtml(agent.model || '(default)')}</p>
             <p class="details-meta-row"><strong>Provider:</strong> ${escapeHtml(agent.provider || '(default)')}</p>
@@ -992,9 +999,106 @@ async function renderMemberDetails(agentId) {
             if (e.key === 'Enter') { e.preventDefault(); searchDetailsMemory(); }
         });
     }
+    renderMcpReadonly('details-mcp-list', agent.mcp_servers);
     loadDetailsTools(agentId);
     loadDetailsSkills(agentId);
     loadMiniActivity(agentId);
+}
+
+// --- MCP Servers editor helpers ---
+
+function renderMcpEditor(containerId, servers) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    if (servers && typeof servers === 'object') {
+        for (const [name, config] of Object.entries(servers)) {
+            addMcpEntry(container, name, config);
+        }
+    }
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn btn-secondary mcp-add-btn';
+    addBtn.textContent = '+ Add MCP server';
+    addBtn.addEventListener('click', () => {
+        addMcpEntry(container, '', {}, addBtn);
+    });
+    container.appendChild(addBtn);
+}
+
+function addMcpEntry(container, name, config, beforeEl) {
+    const envLines = config.env
+        ? Object.entries(config.env).map(([k, v]) => `${k}=${v}`).join('\n')
+        : '';
+    const argsStr = (config.args || []).join(' ');
+    const entry = document.createElement('div');
+    entry.className = 'mcp-entry';
+    entry.innerHTML = `
+        <div class="mcp-entry-header">
+            <input class="form-control mcp-name" type="text" placeholder="Server name (e.g. github)" value="${escapeAttr(name)}">
+            <button class="mcp-entry-remove" title="Remove">&times;</button>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Command</label>
+            <input class="form-control mcp-command" type="text" placeholder="e.g. npx, uvx, docker" value="${escapeAttr(config.command || '')}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Arguments</label>
+            <input class="form-control mcp-args" type="text" placeholder="e.g. -y @modelcontextprotocol/server-github" value="${escapeAttr(argsStr)}">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Environment variables</label>
+            <textarea class="form-control mcp-env" rows="2" placeholder="KEY=value (one per line)">${escapeHtml(envLines)}</textarea>
+        </div>
+    `;
+    entry.querySelector('.mcp-entry-remove').addEventListener('click', () => entry.remove());
+    if (beforeEl) {
+        container.insertBefore(entry, beforeEl);
+    } else {
+        container.appendChild(entry);
+    }
+}
+
+function readMcpEditor(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return null;
+    const entries = container.querySelectorAll('.mcp-entry');
+    if (entries.length === 0) return null;
+    const servers = {};
+    for (const entry of entries) {
+        const name = entry.querySelector('.mcp-name').value.trim();
+        if (!name) continue;
+        const command = entry.querySelector('.mcp-command').value.trim();
+        const argsStr = entry.querySelector('.mcp-args').value.trim();
+        const envText = entry.querySelector('.mcp-env').value.trim();
+        const config = {};
+        if (command) config.command = command;
+        if (argsStr) config.args = argsStr.split(/\s+/);
+        if (envText) {
+            config.env = {};
+            for (const line of envText.split('\n')) {
+                const eq = line.indexOf('=');
+                if (eq > 0) config.env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+            }
+        }
+        servers[name] = config;
+    }
+    return Object.keys(servers).length > 0 ? servers : null;
+}
+
+function renderMcpReadonly(containerId, servers) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    if (!servers || Object.keys(servers).length === 0) {
+        container.innerHTML = '<span style="color:var(--text-tertiary);font-size:13px;">None configured</span>';
+        return;
+    }
+    let html = '<div class="mcp-readonly-list">';
+    for (const [name, config] of Object.entries(servers)) {
+        const cmd = [config.command || '', ...(config.args || [])].join(' ');
+        html += `<div class="mcp-readonly-item"><span class="mcp-readonly-name">${escapeHtml(name)}</span><span class="mcp-readonly-cmd">${escapeHtml(cmd)}</span></div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 function renderMemberEditForm(agentId) {
@@ -1030,6 +1134,10 @@ function renderMemberEditForm(agentId) {
             <input class="form-control" id="edit-provider" type="text" value="${escapeAttr(agent.provider || '')}" placeholder="e.g. ollama, openai, llamastack">
         </div>
         <div class="form-group">
+            <label class="form-label">MCP Servers</label>
+            <div id="edit-mcp-servers"></div>
+        </div>
+        <div class="form-group">
             <label class="form-label">Soul (persona)</label>
             <textarea class="form-control" id="edit-soul" rows="10">${escapeHtml(agent.soul || '')}</textarea>
         </div>
@@ -1045,6 +1153,7 @@ function renderMemberEditForm(agentId) {
     document.getElementById('edit-save-btn').addEventListener('click', () => saveMemberEdit(agentId));
     renderCheckboxGroup('edit-tools-cb', '/tools', agent.tools);
     renderCheckboxGroup('edit-skills-cb', '/skills', agent.skills);
+    renderMcpEditor('edit-mcp-servers', agent.mcp_servers);
 }
 
 async function saveMemberEdit(agentId) {
@@ -1057,6 +1166,7 @@ async function saveMemberEdit(agentId) {
         model: document.getElementById('edit-model').value.trim() || null,
         provider: document.getElementById('edit-provider').value.trim() || null,
         soul: document.getElementById('edit-soul').value,
+        mcp_servers: readMcpEditor('edit-mcp-servers'),
     };
 
     statusEl.textContent = 'Saving...';
@@ -1218,6 +1328,10 @@ function renderCreateTemplateForm() {
             <div id="tpl-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
+            <label class="form-label">MCP Servers</label>
+            <div id="tpl-mcp-servers"></div>
+        </div>
+        <div class="form-group">
             <label class="form-label">Soul (persona)</label>
             <textarea class="form-control" id="tpl-soul" rows="10" placeholder="# Role Name\n\nYou are a ... on Kit's team."></textarea>
         </div>
@@ -1233,6 +1347,7 @@ function renderCreateTemplateForm() {
     document.getElementById('save-template-btn').addEventListener('click', createTemplate);
     renderCheckboxGroup('tpl-tools-cb', '/tools', ['read', 'list_files', 'exec_shell']);
     renderCheckboxGroup('tpl-skills-cb', '/skills', '*');
+    renderMcpEditor('tpl-mcp-servers', null);
 }
 
 async function createTemplate() {
@@ -1252,6 +1367,7 @@ async function createTemplate() {
         return;
     }
 
+    const mcpServers = readMcpEditor('tpl-mcp-servers');
     const template = {
         id,
         name,
@@ -1260,6 +1376,7 @@ async function createTemplate() {
         skills: readCheckboxGroup('tpl-skills-cb'),
         soul: document.getElementById('tpl-soul').value,
     };
+    if (mcpServers) template.mcp_servers = mcpServers;
 
     btn.disabled = true;
     statusEl.textContent = 'Creating...';
@@ -1325,6 +1442,10 @@ async function renderEditTemplateForm(templateId) {
             <div id="tpl-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
+            <label class="form-label">MCP Servers</label>
+            <div id="tpl-mcp-servers"></div>
+        </div>
+        <div class="form-group">
             <label class="form-label">Soul (persona)</label>
             <textarea class="form-control" id="tpl-soul" rows="10">${escapeHtml(tpl.soul || '')}</textarea>
         </div>
@@ -1340,6 +1461,7 @@ async function renderEditTemplateForm(templateId) {
     document.getElementById('save-template-btn').addEventListener('click', () => saveTemplate(tpl.id));
     renderCheckboxGroup('tpl-tools-cb', '/tools', tpl.tools || []);
     renderCheckboxGroup('tpl-skills-cb', '/skills', tpl.skills || []);
+    renderMcpEditor('tpl-mcp-servers', tpl.mcp_servers);
 }
 
 async function saveTemplate(templateId) {
@@ -1352,6 +1474,7 @@ async function saveTemplate(templateId) {
         return;
     }
 
+    const mcpServers = readMcpEditor('tpl-mcp-servers');
     const template = {
         id: templateId,
         name,
@@ -1360,6 +1483,7 @@ async function saveTemplate(templateId) {
         skills: readCheckboxGroup('tpl-skills-cb'),
         soul: document.getElementById('tpl-soul').value,
     };
+    if (mcpServers) template.mcp_servers = mcpServers;
 
     btn.disabled = true;
     statusEl.textContent = 'Saving...';

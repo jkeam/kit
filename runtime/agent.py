@@ -13,6 +13,7 @@ from openai import AsyncOpenAI
 
 from runtime.memory import MemoryManager
 from runtime.embeddings import EmbeddingsManager
+from runtime.mcp import MCPManager, parse_mcp_tool_name
 from runtime.skills import SkillsManager
 from tools.core import TOOLS, execute_tool
 
@@ -48,6 +49,7 @@ class PersonalAssistant:
         session_manager: Optional[Any] = None,
         platform: Optional[str] = None,
         user_id: Optional[str] = None,
+        mcp_servers: Optional[Dict[str, dict]] = None,
     ):
         """
         Initialize the assistant.
@@ -87,6 +89,9 @@ class PersonalAssistant:
             platform: The platform this agent's own session belongs to
                 (needed so delegation targets the same user's thread).
             user_id: The user id this agent's own session belongs to.
+            mcp_servers: MCP server configurations keyed by server name.
+                Each value is a dict with 'command', 'args', and optional
+                'env'. Servers are started lazily on the first chat() call.
         """
         if provider in OPENAI_COMPATIBLE_PROVIDERS:
             # Any OpenAI-compatible endpoint (Ollama's /v1 endpoint, OpenCode
@@ -144,12 +149,24 @@ class PersonalAssistant:
         self.user_id = user_id
         self._current_delegation_depth = 0
 
+        self.mcp: Optional[MCPManager] = (
+            MCPManager(mcp_servers) if mcp_servers else None
+        )
+
     def _load_file(self, filename: str) -> str:
         """Load a file from workspace directory."""
         file_path = self.workspace_dir / filename
         if file_path.exists():
             return file_path.read_text()
         return ""
+
+    async def _ensure_mcp_connected(self) -> None:
+        """Start MCP servers (if configured) on first use and merge their
+        tools into the list sent to the LLM."""
+        if self.mcp is None or self.mcp.connected:
+            return
+        await self.mcp.connect()
+        self._filtered_tools = self._filtered_tools + self.mcp.get_openai_tools()
 
     def _team_roster_section(self) -> str:
         """List of teammates this agent can hand tasks to via agent_delegate,
@@ -295,12 +312,17 @@ class PersonalAssistant:
             return f"Error delegating to '{target_agent_id}': {e}"
 
     async def _execute_tool_async(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
-        """Dispatch a tool call, awaiting `agent_delegate` directly (it runs
-        a nested async chat_stream) and running everything else in a thread
+        """Dispatch a tool call, awaiting `agent_delegate` and MCP tools
+        directly (both are async), and running everything else in a thread
         (existing behavior - shell/browser/skills calls are sync/blocking).
         """
         if tool_name == "agent_delegate":
             return await self._delegate(tool_args)
+        if self.mcp:
+            parsed = parse_mcp_tool_name(tool_name)
+            if parsed:
+                server_name, real_tool_name = parsed
+                return await self.mcp.call_tool(server_name, real_tool_name, tool_args)
         return await asyncio.to_thread(self._execute_tool, tool_name, tool_args)
 
     async def chat(self, user_message: str, _delegation_depth: int = 0) -> str:
@@ -331,6 +353,7 @@ class PersonalAssistant:
         """
         self._current_delegation_depth = _delegation_depth
         try:
+            await self._ensure_mcp_connected()
             system_prompt = self._build_system_prompt()
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -446,6 +469,11 @@ class PersonalAssistant:
         if not self.agent_id or self.agent_id == "kit":
             return "Assistant"
         return f"{self.agent_id} (agent)"
+
+    async def close(self) -> None:
+        """Shut down MCP server connections (if any)."""
+        if self.mcp:
+            await self.mcp.close()
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """Get statistics about memory usage."""
