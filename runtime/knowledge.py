@@ -120,6 +120,36 @@ class KnowledgeManager:
         target.unlink()
         return f"Removed '{source_name}' from {self.agent_id}'s knowledge base"
 
+    def ingest_url(self, url: str, source_name: str = "") -> str:
+        import httpx
+        import html2text
+        from urllib.parse import urlparse
+
+        response = httpx.get(
+            url,
+            follow_redirects=True,
+            timeout=60.0,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+            },
+        )
+        response.raise_for_status()
+
+        h = html2text.HTML2Text()
+        h.ignore_links = False
+        h.ignore_images = True
+        h.ignore_emphasis = False
+        h.body_width = 0
+        markdown = h.handle(response.text)
+
+        if not source_name:
+            parsed = urlparse(url)
+            source_name = parsed.netloc + parsed.path.rstrip("/").replace("/", "-")
+
+        content = f"Source: {url}\n\n{markdown}"
+        self.ingest_text(content, source_name)
+        return f"Ingested '{source_name}' into {self.agent_id}'s knowledge base ({len(markdown)} characters from {url})"
+
     def index_all(self) -> None:
         if not self.embeddings:
             return

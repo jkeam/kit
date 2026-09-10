@@ -578,6 +578,11 @@ class KnowledgeIngestRequest(BaseModel):
     source_name: str
 
 
+class KnowledgeIngestUrlRequest(BaseModel):
+    url: str
+    source_name: str = ""
+
+
 class KnowledgeSearchRequest(BaseModel):
     query: str
     n_results: int = 3
@@ -618,6 +623,16 @@ async def ingest_knowledge_document(agent_id: str, request: KnowledgeIngestReque
     km = _knowledge_manager(agent_id)
     result = km.ingest_text(request.text, request.source_name)
     return {"message": result}
+
+
+@app.post("/agents/{agent_id}/knowledge/urls", dependencies=[Depends(_require_gateway_token)])
+async def ingest_knowledge_url(agent_id: str, request: KnowledgeIngestUrlRequest):
+    km = _knowledge_manager(agent_id)
+    try:
+        result = await asyncio.to_thread(km.ingest_url, request.url, request.source_name)
+        return {"message": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/agents/{agent_id}/knowledge/search", dependencies=[Depends(_require_gateway_token)])

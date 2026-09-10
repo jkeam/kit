@@ -23,6 +23,10 @@ def knowledge_list(**kwargs) -> str:
     return "Error: knowledge_list must be handled by PersonalAssistant"
 
 
+def knowledge_ingest_url(**kwargs) -> str:
+    return "Error: knowledge_ingest_url must be handled by PersonalAssistant"
+
+
 def knowledge_forget(**kwargs) -> str:
     return "Error: knowledge_forget must be handled by PersonalAssistant"
 
@@ -102,6 +106,27 @@ KNOWLEDGE_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "knowledge_ingest_url",
+            "description": "Fetch a public URL and ingest its content into this agent's knowledge base for semantic search. Handles the full page content without truncation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The public URL to fetch and ingest"
+                    },
+                    "source_name": {
+                        "type": "string",
+                        "description": "A name for this knowledge source (optional, derived from URL if omitted)"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "knowledge_forget",
             "description": "Remove a source from this agent's knowledge base.",
             "parameters": {
@@ -121,6 +146,7 @@ KNOWLEDGE_TOOLS = [
 KNOWLEDGE_TOOL_FUNCTIONS = {
     "knowledge_teach": knowledge_teach,
     "knowledge_ingest": knowledge_ingest,
+    "knowledge_ingest_url": knowledge_ingest_url,
     "knowledge_search": knowledge_search,
     "knowledge_list": knowledge_list,
     "knowledge_forget": knowledge_forget,

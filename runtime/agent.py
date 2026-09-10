@@ -290,6 +290,13 @@ class PersonalAssistant:
                 tool_args.get("text", ""),
                 tool_args.get("source_name", "unnamed"),
             )
+        if tool_name == "knowledge_ingest_url":
+            if not self.knowledge:
+                return "Error: knowledge system not initialized"
+            url = tool_args.get("url", "")
+            if not url:
+                return "Error: url is required"
+            return self.knowledge.ingest_url(url, tool_args.get("source_name", ""))
         if tool_name == "knowledge_list":
             if not self.knowledge:
                 return "Error: knowledge system not initialized"

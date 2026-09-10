@@ -72,6 +72,33 @@ let streamingMessageDiv = null;
 let streamingContentDiv = null;
 let streamingText = '';
 
+// Client-side inactivity timeout: if no streaming events arrive within this
+// window, assume the server-side operation is lost and re-enable the UI.
+const STREAM_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes
+let streamTimeoutId = null;
+
+function startStreamTimeout() {
+    clearStreamTimeout();
+    streamTimeoutId = setTimeout(() => {
+        if (chatInput.disabled) {
+            removeThinkingIndicator();
+            addMessage('Response timed out — no activity for 2 minutes. You can try sending your message again.', 'system');
+            finishStreaming();
+        }
+    }, STREAM_INACTIVITY_TIMEOUT_MS);
+}
+
+function resetStreamTimeout() {
+    if (streamTimeoutId !== null) startStreamTimeout();
+}
+
+function clearStreamTimeout() {
+    if (streamTimeoutId !== null) {
+        clearTimeout(streamTimeoutId);
+        streamTimeoutId = null;
+    }
+}
+
 // DOM Elements
 const chatMessages = document.getElementById('chat-messages');
 const chatScrollContainer = chatMessages;
@@ -455,6 +482,7 @@ async function sendMessage() {
 
     if (ws && ws.readyState === WebSocket.OPEN) {
         addThinkingIndicator();
+        startStreamTimeout();
         ws.send(JSON.stringify({
             type: 'chat_message',
             platform: PLATFORM,
@@ -541,6 +569,8 @@ function updateChatHeaderForCurrentAgent() {
 async function selectMember(agentId) {
     currentMode = 'dm';
     currentAgentId = agentId;
+    resetStreamingState();
+    removeThinkingIndicator();
     updateChatHeaderForCurrentAgent();
     refreshMemberListVisualState();
     messageCount = 0;
@@ -554,6 +584,8 @@ async function selectMember(agentId) {
 
 async function selectBroadcastChannel() {
     currentMode = 'broadcast';
+    resetStreamingState();
+    removeThinkingIndicator();
     refreshMemberListVisualState();
     messageCount = 0;
     messageCountSpan.textContent = '0 messages';
@@ -575,12 +607,22 @@ async function selectBroadcastChannel() {
 }
 
 function finishStreaming() {
+    clearStreamTimeout();
     streamingMessageDiv = null;
     streamingContentDiv = null;
     streamingText = '';
     chatInput.disabled = false;
     sendButton.disabled = false;
     chatInput.focus();
+}
+
+function resetStreamingState() {
+    clearStreamTimeout();
+    streamingMessageDiv = null;
+    streamingContentDiv = null;
+    streamingText = '';
+    chatInput.disabled = false;
+    sendButton.disabled = false;
 }
 
 // Event listeners
@@ -1954,6 +1996,56 @@ async function ingestKnowledgeDoc() {
     }
 }
 
+async function ingestKnowledgeUrl() {
+    const urlInput = document.getElementById('knowledge-url-input');
+    const nameInput = document.getElementById('knowledge-url-name');
+    const btn = document.getElementById('knowledge-url-btn');
+    const overlay = document.getElementById('ingest-overlay');
+    const spinner = document.getElementById('ingest-spinner');
+    const statusEl = document.getElementById('ingest-overlay-status');
+    const closeBtn = document.getElementById('ingest-overlay-close');
+
+    const url = urlInput.value.trim();
+    if (!url || !knowledgeAgentId) return;
+
+    btn.disabled = true;
+    overlay.hidden = false;
+    closeBtn.hidden = true;
+    spinner.style.display = '';
+    statusEl.textContent = 'Fetching and ingesting URL...';
+    statusEl.className = 'ingest-overlay-status';
+
+    try {
+        const response = await apiFetch(
+            `${API_BASE}/agents/${encodeURIComponent(knowledgeAgentId)}/knowledge/urls`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, source_name: nameInput.value.trim() }),
+            },
+        );
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        spinner.style.display = 'none';
+        statusEl.textContent = data.message || 'Ingestion complete';
+        statusEl.className = 'ingest-overlay-status success';
+        urlInput.value = '';
+        nameInput.value = '';
+        await loadKnowledge();
+        setTimeout(() => { overlay.hidden = true; }, 2000);
+    } catch (error) {
+        spinner.style.display = 'none';
+        statusEl.textContent = `Error: ${error.message}`;
+        statusEl.className = 'ingest-overlay-status error';
+        closeBtn.hidden = false;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 async function searchKnowledge() {
     const input = document.getElementById('knowledge-search-input');
     const btn = document.getElementById('knowledge-search-btn');
@@ -2003,8 +2095,12 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !knowledgeOverlay.hidden) closeKnowledgeModal();
 });
 document.getElementById('knowledge-fact-btn')?.addEventListener('click', addKnowledgeFact);
+document.getElementById('knowledge-url-btn')?.addEventListener('click', ingestKnowledgeUrl);
 document.getElementById('knowledge-doc-btn')?.addEventListener('click', ingestKnowledgeDoc);
 document.getElementById('knowledge-search-btn')?.addEventListener('click', searchKnowledge);
+document.getElementById('ingest-overlay-close')?.addEventListener('click', () => {
+    document.getElementById('ingest-overlay').hidden = true;
+});
 document.getElementById('knowledge-search-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') searchKnowledge();
 });
@@ -2028,6 +2124,7 @@ function connectWebSocket() {
         ws.onopen = () => {
             console.log('WebSocket connected');
             wsReconnectAttempts = 0;
+            resetStreamingState();
             addMessage('Real-time updates enabled', 'system');
         };
 
@@ -2087,6 +2184,7 @@ function handleWebSocketMessage(data) {
 
         case 'stream_start':
             if (isOwnSession) {
+                resetStreamTimeout();
                 removeThinkingIndicator();
                 streamingText = '';
 
@@ -2129,6 +2227,7 @@ function handleWebSocketMessage(data) {
 
         case 'text_delta':
             if (isOwnSession && streamingContentDiv) {
+                resetStreamTimeout();
                 streamingText += data.content;
                 streamingContentDiv.innerHTML = renderMarkdown(streamingText);
                 scrollChatToBottom();
@@ -2137,6 +2236,7 @@ function handleWebSocketMessage(data) {
 
         case 'tool_call_start':
             if (isOwnSession && streamingMessageDiv) {
+                resetStreamTimeout();
                 const toolDiv = document.createElement('div');
                 toolDiv.className = 'tool-call tool-running';
                 toolDiv.id = `tool-${data.tool_name}-${Date.now()}`;
@@ -2149,6 +2249,7 @@ function handleWebSocketMessage(data) {
 
         case 'tool_call_result':
             if (isOwnSession && streamingMessageDiv) {
+                resetStreamTimeout();
                 const running = streamingMessageDiv.querySelector('.tool-call.tool-running');
                 if (running) {
                     running.classList.remove('tool-running');

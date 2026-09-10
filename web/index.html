@@ -172,6 +172,15 @@
                     </details>
 
                     <details class="knowledge-form-section">
+                        <summary>Ingest from URL</summary>
+                        <div class="knowledge-form">
+                            <input id="knowledge-url-input" class="form-control" type="url" placeholder="https://example.com/docs/page">
+                            <input id="knowledge-url-name" class="form-control" type="text" placeholder="Source name (optional, derived from URL)">
+                            <button id="knowledge-url-btn" class="btn btn-primary">Ingest URL</button>
+                        </div>
+                    </details>
+
+                    <details class="knowledge-form-section">
                         <summary>Ingest a document</summary>
                         <div class="knowledge-form">
                             <input id="knowledge-doc-name" class="form-control" type="text" placeholder="Source name (e.g. openshift-install-guide)">
@@ -194,6 +203,15 @@
 
                 <div class="knowledge-section-label">Sources</div>
                 <div id="knowledge-list"></div>
+            </div>
+
+            <!-- Ingestion progress overlay -->
+            <div class="ingest-overlay" id="ingest-overlay" hidden>
+                <div class="ingest-overlay-card">
+                    <div class="spinner" id="ingest-spinner"></div>
+                    <div class="ingest-overlay-status" id="ingest-overlay-status">Fetching URL...</div>
+                    <button class="btn btn-secondary" id="ingest-overlay-close" hidden>Close</button>
+                </div>
             </div>
         </div>
     </div>
