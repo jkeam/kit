@@ -301,6 +301,26 @@ button, input, textarea {
     box-shadow: 0 0 0 2px rgba(236, 178, 46, 0.3);
 }
 
+.member-row[draggable="true"] {
+    cursor: grab;
+}
+
+.member-row[draggable="true"]:active {
+    cursor: grabbing;
+}
+
+.member-row.dragging {
+    opacity: 0.3;
+}
+
+.member-row.drag-over-above {
+    box-shadow: inset 0 2px 0 0 var(--accent);
+}
+
+.member-row.drag-over-below {
+    box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+
 .add-teammate-btn {
     flex-shrink: 0;
     margin: 6px 12px 14px;

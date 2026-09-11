@@ -680,7 +680,7 @@ function memberRowHtml(agent) {
     const bg = avatarColorFor(agent.id);
     const role = roleLabelFor(agent.id);
     return `
-        <button class="member-row" data-agent-id="${escapeAttr(agent.id)}">
+        <button class="member-row" data-agent-id="${escapeAttr(agent.id)}" draggable="true">
             <div class="avatar" style="background:${bg}">${initialsFor(agent.name)}</div>
             <div class="member-row-text">
                 <div class="member-row-name">${escapeHtml(agent.name)}${role ? `<span class="member-row-role">${escapeHtml(role)}</span>` : ''}</div>
@@ -691,13 +691,99 @@ function memberRowHtml(agent) {
     `;
 }
 
+const DM_ORDER_KEY = 'kit-dm-order';
+
+function getSavedDmOrder() {
+    try {
+        const raw = localStorage.getItem(DM_ORDER_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+}
+
+function saveDmOrder(ids) {
+    localStorage.setItem(DM_ORDER_KEY, JSON.stringify(ids));
+}
+
+function getOrderedDmAgents() {
+    const all = [...agentsCache];
+    const saved = getSavedDmOrder();
+    if (!saved) {
+        const kit = all.find(a => a.id === KIT_AGENT_ID);
+        const others = all.filter(a => a.id !== KIT_AGENT_ID).sort((a, b) => a.name.localeCompare(b.name));
+        return kit ? [kit, ...others] : others;
+    }
+    const byId = {};
+    all.forEach(a => { byId[a.id] = a; });
+    const ordered = [];
+    saved.forEach(id => {
+        if (byId[id]) {
+            ordered.push(byId[id]);
+            delete byId[id];
+        }
+    });
+    Object.values(byId).sort((a, b) => a.name.localeCompare(b.name)).forEach(a => ordered.push(a));
+    return ordered;
+}
+
+function initDmDragAndDrop() {
+    const dmList = memberList.querySelector('.dm-list');
+    if (!dmList) return;
+    let draggedEl = null;
+
+    dmList.querySelectorAll('.member-row').forEach(row => {
+        row.addEventListener('dragstart', (e) => {
+            draggedEl = row;
+            row.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', row.dataset.agentId);
+        });
+
+        row.addEventListener('dragend', () => {
+            row.classList.remove('dragging');
+            dmList.querySelectorAll('.member-row').forEach(r => r.classList.remove('drag-over-above', 'drag-over-below'));
+            draggedEl = null;
+        });
+
+        row.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (row === draggedEl) return;
+            dmList.querySelectorAll('.member-row').forEach(r => {
+                if (r !== row) r.classList.remove('drag-over-above', 'drag-over-below');
+            });
+            const rect = row.getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            row.classList.remove('drag-over-above', 'drag-over-below');
+            row.classList.add(e.clientY < midY ? 'drag-over-above' : 'drag-over-below');
+        });
+
+        row.addEventListener('dragleave', () => {
+            row.classList.remove('drag-over-above', 'drag-over-below');
+        });
+
+        row.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (row === draggedEl || !draggedEl) return;
+            const rect = row.getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            if (e.clientY < midY) {
+                dmList.insertBefore(draggedEl, row);
+            } else {
+                dmList.insertBefore(draggedEl, row.nextSibling);
+            }
+            row.classList.remove('drag-over-above', 'drag-over-below');
+            const ids = [...dmList.querySelectorAll('.member-row')].map(r => r.dataset.agentId);
+            saveDmOrder(ids);
+        });
+    });
+}
+
 function renderMemberList() {
     if (!agentsCache.length) {
         memberList.innerHTML = '<div class="member-list-empty">No team members</div>';
         return;
     }
-    const kit = agentsCache.find(a => a.id === KIT_AGENT_ID);
-    const others = agentsCache.filter(a => a.id !== KIT_AGENT_ID).sort((a, b) => a.name.localeCompare(b.name));
+    const dmAgents = getOrderedDmAgents();
 
     let html = '';
 
@@ -713,8 +799,9 @@ function renderMemberList() {
     `;
 
     html += '<div class="member-section-label">Direct Messages</div>';
-    if (kit) html += memberRowHtml(kit);
-    html += others.map(memberRowHtml).join('');
+    html += '<div class="dm-list">';
+    html += dmAgents.map(memberRowHtml).join('');
+    html += '</div>';
 
     memberList.innerHTML = html;
 
@@ -725,6 +812,7 @@ function renderMemberList() {
         row.addEventListener('click', () => selectBroadcastChannel());
     });
 
+    initDmDragAndDrop();
     refreshMemberListVisualState();
 }
 
