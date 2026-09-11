@@ -476,17 +476,21 @@ async function sendMessage() {
     chatInput.disabled = true;
     sendButton.disabled = true;
 
-    addMessage(message, 'user');
+    const msgDiv = addMessage(message, 'user');
     chatInput.value = '';
     chatInput.style.height = 'auto';
 
     if (currentMode === 'broadcast') {
+        const messageId = crypto.randomUUID();
+        msgDiv.dataset.messageId = messageId;
+
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
                 type: 'broadcast',
                 platform: PLATFORM,
                 user_id: USER_ID,
                 message: message,
+                message_id: messageId,
             }));
         } else {
             try {
@@ -2187,6 +2191,24 @@ function handleActivityEvent(data) {
     }
 }
 
+function renderReactions(messageDiv, reactions) {
+    const reactionsDiv = document.createElement('div');
+    reactionsDiv.className = 'broadcast-reactions';
+    reactions.forEach((r, i) => {
+        const chip = document.createElement('span');
+        chip.className = 'reaction-chip';
+        chip.style.borderColor = avatarColorFor(r.agent_id);
+        chip.style.animationDelay = `${i * 0.12}s`;
+        chip.textContent = r.emoji;
+        const tip = document.createElement('span');
+        tip.className = 'reaction-tooltip';
+        tip.textContent = r.agent_name;
+        chip.appendChild(tip);
+        reactionsDiv.appendChild(chip);
+    });
+    messageDiv.querySelector('.message-body').appendChild(reactionsDiv);
+}
+
 // Handle WebSocket messages
 function handleWebSocketMessage(data) {
     console.log('WebSocket message:', data);
@@ -2337,6 +2359,16 @@ function handleWebSocketMessage(data) {
             }
             break;
 
+        case 'broadcast_reactions':
+            if (currentMode === 'broadcast' && data.message_id) {
+                const target = document.querySelector(`[data-message-id="${CSS.escape(data.message_id)}"]`);
+                if (target) {
+                    renderReactions(target, data.reactions);
+                    scrollChatToBottom();
+                }
+            }
+            break;
+
         case 'pong':
             console.log('Pong received');
             break;
@@ -2362,13 +2394,21 @@ async function loadChatHistory() {
         if (!response.ok) return;
         const messages = await response.json();
         for (const msg of messages) {
+            if (msg.role === 'reactions') {
+                if (msg.message_id && msg.reactions) {
+                    const target = chatMessages.querySelector(`[data-message-id="${CSS.escape(msg.message_id)}"]`);
+                    if (target) renderReactions(target, msg.reactions);
+                }
+                continue;
+            }
             const div = addMessage(msg.content, msg.role, null, msg.sender || null);
+            if (msg.message_id) div.dataset.messageId = msg.message_id;
             const timeDiv = div.querySelector('.message-time');
             if (timeDiv && msg.timestamp) {
                 timeDiv.textContent = new Date(msg.timestamp).toLocaleTimeString();
             }
         }
-        messageCount = messages.length;
+        messageCount = messages.filter(m => m.role !== 'reactions').length;
         messageCountSpan.textContent = `${messageCount} messages`;
     } catch (error) {
         console.error('Failed to load chat history:', error);

@@ -305,7 +305,7 @@ class SessionManager:
         return self.sessions_dir / f"{safe_name}.json"
 
     def save_message(
-        self, session_id: str, role: str, content: str, sender: Optional[str] = None
+        self, session_id: str, role: str, content: str, sender: Optional[str] = None, **extras
     ) -> None:
         """Append a message to the session's history on disk.
 
@@ -313,6 +313,9 @@ class SessionManager:
         else's thread by another agent (delegation) rather than typed by
         the human - lets the UI render "Kit asked: ..." instead of
         implying the human wrote it.
+
+        Any additional keyword arguments are stored verbatim on the entry
+        (e.g. message_id, reactions).
         """
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         path = self._session_file(session_id)
@@ -329,6 +332,7 @@ class SessionManager:
         }
         if sender is not None:
             entry["sender"] = sender
+        entry.update(extras)
         messages.append(entry)
         path.write_text(json.dumps(messages))
 

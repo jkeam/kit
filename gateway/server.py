@@ -24,12 +24,15 @@ import uvicorn
 import json
 import asyncio
 import secrets
+import re
+import uuid
 
 import os
 from env_config import env_int
 from gateway.session_manager import SessionManager, make_session_id
 from gateway.scheduler import run_scheduler
 from runtime.memory import MemoryManager
+from runtime.agent import OPENAI_COMPATIBLE_PROVIDERS
 
 
 def _require_gateway_token(authorization: Optional[str] = Header(default=None)) -> None:
@@ -312,16 +315,20 @@ async def broadcast_message(request: BroadcastRequest):
     mem = MemoryManager(str(session_manager.agent_registry.workspace_dir))
     mem.save_broadcast(request.message)
 
+    msg_id = str(uuid.uuid4())
     session_id = _broadcast_session_id(request.platform, request.user_id)
-    session_manager.save_message(session_id, "user", request.message)
+    session_manager.save_message(session_id, "user", request.message, message_id=msg_id)
 
     await manager.broadcast({
         "type": "user_message",
         "session_id": session_id,
         "platform": request.platform,
         "message": request.message,
+        "message_id": msg_id,
         "timestamp": _now(),
     })
+
+    asyncio.create_task(_generate_broadcast_reactions(request.message, msg_id, session_id))
 
     return {"status": "ok", "session_id": session_id}
 
@@ -705,6 +712,79 @@ async def list_skills_endpoint():
     return list(skills.metadata.values())
 
 
+async def _generate_broadcast_reactions(message: str, message_id: str, session_id: str):
+    """Ask the LLM to pick one emoji per team member, then broadcast them."""
+    try:
+        agents = session_manager.agent_registry.list_agents()
+        if not agents:
+            return
+
+        agent_lines = "\n".join(
+            f"- {a.id}: {a.name} ({a.description or 'team member'})"
+            for a in agents
+        )
+
+        prompt = (
+            f"A team member just posted this in the team chat:\n"
+            f'"{message}"\n\n'
+            f"Team members:\n{agent_lines}\n\n"
+            f"Pick ONE emoji reaction for each team member that fits their role/personality "
+            f"and the message content. Respond with ONLY a JSON object mapping agent id to a single emoji.\n"
+            f'Example: {{"kit": "\U0001f44d", "dev-1": "\U0001f525"}}'
+        )
+
+        if session_manager.llm_provider in OPENAI_COMPATIBLE_PROVIDERS:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(
+                base_url=session_manager.llm_base_url,
+                api_key=session_manager.llm_api_key or "not-needed",
+                default_headers=session_manager.llm_extra_headers,
+            )
+        else:
+            from llama_stack_client import AsyncLlamaStackClient
+            client = AsyncLlamaStackClient(
+                base_url=session_manager.llm_base_url,
+                default_headers=session_manager.llm_extra_headers,
+            )
+
+        response = await client.chat.completions.create(
+            model=session_manager.model,
+            messages=[{"role": "user", "content": prompt}],
+            stream=False,
+        )
+
+        text = response.choices[0].message.content.strip()
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        code_match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL)
+        if code_match:
+            text = code_match.group(1)
+
+        reactions_map = json.loads(text)
+
+        reactions = []
+        for agent in agents:
+            emoji = reactions_map.get(agent.id)
+            if emoji:
+                reactions.append({
+                    "agent_id": agent.id,
+                    "agent_name": agent.name,
+                    "emoji": emoji,
+                })
+
+        if reactions:
+            await manager.broadcast({
+                "type": "broadcast_reactions",
+                "message_id": message_id,
+                "reactions": reactions,
+                "timestamp": _now(),
+            })
+            session_manager.save_message(
+                session_id, "reactions", "", message_id=message_id, reactions=reactions
+            )
+    except Exception as e:
+        print(f"Warning: Failed to generate broadcast reactions: {e}")
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -806,19 +886,23 @@ async def websocket_endpoint(websocket: WebSocket):
                     platform = message.get("platform", "web")
                     user_id = message.get("user_id", "anonymous")
                     user_msg = message.get("message", "")
+                    msg_id = message.get("message_id", str(uuid.uuid4()))
                     session_id = _broadcast_session_id(platform, user_id)
 
                     mem = MemoryManager(str(session_manager.agent_registry.workspace_dir))
                     mem.save_broadcast(user_msg)
-                    session_manager.save_message(session_id, "user", user_msg)
+                    session_manager.save_message(session_id, "user", user_msg, message_id=msg_id)
 
                     await manager.broadcast({
                         "type": "user_message",
                         "session_id": session_id,
                         "platform": platform,
                         "message": user_msg,
+                        "message_id": msg_id,
                         "timestamp": _now(),
                     })
+
+                    asyncio.create_task(_generate_broadcast_reactions(user_msg, msg_id, session_id))
 
             except json.JSONDecodeError:
                 await websocket.send_json({

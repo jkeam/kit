@@ -544,6 +544,63 @@ button.chat-header-menu {
     border-radius: var(--radius-md);
 }
 
+/* Broadcast emoji reactions */
+.broadcast-reactions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 8px;
+}
+
+@keyframes reaction-pop {
+    0%   { opacity: 0; transform: scale(0.4); }
+    70%  { transform: scale(1.15); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+.reaction-chip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--panel-bg);
+    border: 2px solid var(--border);
+    cursor: default;
+    opacity: 0;
+    animation: reaction-pop 0.35s ease-out forwards;
+}
+
+.reaction-chip:hover {
+    transform: scale(1.25);
+    transition: transform 0.15s ease;
+}
+
+.reaction-chip .reaction-tooltip {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%) scale(0.9);
+    background: var(--rail-bg);
+    color: #fff;
+    font-size: 11px;
+    font-family: var(--font);
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.reaction-chip:hover .reaction-tooltip {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+}
+
 /* Streaming cursor */
 .message.streaming .message-content::after {
     content: '▌';
