@@ -254,7 +254,7 @@ A software developer that can read, write, and execute code.
 
 A researcher that investigates topics using web search, knowledge bases, and local files. Cannot modify code.
 
-- **Tools**: read, list_files, exec_shell, memory, knowledge, web (no write access)
+- **Tools**: read, list_files, memory, knowledge, web (no write access, no shell access)
 - **Persona**: Thorough, cites sources, synthesizes findings into clear summaries, flags uncertainty
 
 ### security

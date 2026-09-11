@@ -25,6 +25,15 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SHELL_METACHARACTERS_RE = re.compile(r'[&|;`$<>]')
 SHELL_EXEC_TIMEOUT_SECONDS = env_int("SHELL_EXEC_TIMEOUT_SECONDS", 30)
 
+# Blocking metacharacters stops a single exec_shell call from chaining into
+# extra commands, but it can't stop one destructive command run on its own
+# (e.g. `rm -rf ~`). Block the highest-risk commands by default; config.yaml
+# can override this list (set tools.safety.blocked_commands: [] to disable).
+DEFAULT_BLOCKED_COMMANDS = [
+    "rm", "mv", "dd", "mkfs", "shutdown", "reboot", "halt",
+    "chmod", "chown", "kill", "killall", "pkill",
+]
+
 
 def read(path: str) -> str:
     """
@@ -35,8 +44,16 @@ def read(path: str) -> str:
 
     Returns:
         File contents as string
+
+    Security:
+        Restricted to the workspace directory (same boundary as write()) —
+        without this, a prompt-injected LLM could read /etc/shadow, SSH
+        keys, .env files, or the gateway token.
     """
-    file_path = Path(path).expanduser()
+    file_path = Path(path).expanduser().resolve()
+
+    if not file_path.is_relative_to(WORKSPACE_ROOT):
+        return f"Error: reads are restricted to the workspace directory ({WORKSPACE_ROOT})"
 
     if not file_path.exists():
         return f"Error: File not found: {path}"
@@ -75,17 +92,24 @@ def write(path: str, content: str) -> str:
         return f"Error writing file: {e}"
 
 
-def list_files(directory: str = ".") -> str:
+def list_files(directory: str = "workspace") -> str:
     """
     List files and directories in a path.
 
     Args:
-        directory: Directory to list (default: current directory)
+        directory: Directory to list (default: the workspace directory)
 
     Returns:
         Formatted list of files and directories
+
+    Security:
+        Restricted to the workspace directory (same boundary as read()/
+        write()) to prevent filesystem reconnaissance.
     """
-    dir_path = Path(directory).expanduser()
+    dir_path = Path(directory).expanduser().resolve()
+
+    if not dir_path.is_relative_to(WORKSPACE_ROOT):
+        return f"Error: listing is restricted to the workspace directory ({WORKSPACE_ROOT})"
 
     if not dir_path.exists():
         return f"Error: Directory not found: {directory}"
@@ -137,6 +161,9 @@ def exec_shell(command: str) -> str:
         - No shell metacharacters (pipes, chains, redirects, substitution)
         - Runs with shell=False; if config.yaml sets tools.safety.allowed_commands,
           the command's first token must be in that list
+        - Otherwise, the command's first token is checked against
+          tools.safety.blocked_commands (defaults to DEFAULT_BLOCKED_COMMANDS)
+          to stop single-shot destructive commands like `rm -rf`
         - Destructive commands require confirmation in higher layer
     """
     # Safety check: block sudo
@@ -158,8 +185,13 @@ def exec_shell(command: str) -> str:
 
     safety = _load_shell_safety_config()
     allowed_commands = safety.get("allowed_commands") or []
-    if allowed_commands and args[0] not in allowed_commands:
-        return f"Error: command '{args[0]}' is not in the allowed_commands list"
+    if allowed_commands:
+        if args[0] not in allowed_commands:
+            return f"Error: command '{args[0]}' is not in the allowed_commands list"
+    else:
+        blocked_commands = safety.get("blocked_commands", DEFAULT_BLOCKED_COMMANDS)
+        if args[0] in blocked_commands:
+            return f"Error: command '{args[0]}' is blocked for safety (set tools.safety.allowed_commands or blocked_commands in config.yaml to change this)"
 
     try:
         result = subprocess.run(
@@ -253,7 +285,7 @@ CORE_TOOLS = [
         "type": "function",
         "function": {
             "name": "read",
-            "description": "Read the contents of a file",
+            "description": "Read the contents of a file. Restricted to the workspace directory.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -270,7 +302,7 @@ CORE_TOOLS = [
         "type": "function",
         "function": {
             "name": "write",
-            "description": "Write content to a file (overwrites existing)",
+            "description": "Write content to a file (overwrites existing). Restricted to the workspace directory.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -291,13 +323,13 @@ CORE_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files and directories in a path",
+            "description": "List files and directories in a path. Restricted to the workspace directory.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "directory": {
                         "type": "string",
-                        "description": "Directory to list (default: current directory)"
+                        "description": "Directory to list (default: the workspace directory)"
                     }
                 }
             }

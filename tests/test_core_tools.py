@@ -4,7 +4,7 @@ Assumes tests run from the repo root (so "workspace/" resolves to the real
 workspace directory, matching every other relative path in this codebase).
 """
 
-from tools.core import WORKSPACE_ROOT, exec_shell, memory_get, write
+from tools.core import WORKSPACE_ROOT, exec_shell, list_files, memory_get, read, write
 
 
 def test_memory_get_rejects_path_traversal():
@@ -53,3 +53,35 @@ def test_exec_shell_blocks_shell_metacharacters():
 def test_exec_shell_runs_simple_command():
     result = exec_shell("echo hello-from-test")
     assert "hello-from-test" in result
+
+
+def test_exec_shell_blocks_destructive_commands_by_default():
+    for command in ["rm -rf /tmp/whatever", "chmod 777 /etc/passwd", "kill -9 1"]:
+        result = exec_shell(command)
+        assert "blocked for safety" in result, f"expected rejection for: {command}"
+
+
+def test_read_rejects_path_outside_workspace(tmp_path):
+    outside = tmp_path / "secret.txt"
+    outside.write_text("nope")
+    result = read(str(outside))
+    assert "restricted to the workspace directory" in result
+
+
+def test_read_allows_path_inside_workspace():
+    target = WORKSPACE_ROOT / "_test_read_tmp.txt"
+    try:
+        target.write_text("hello")
+        assert read(str(target)) == "hello"
+    finally:
+        target.unlink(missing_ok=True)
+
+
+def test_list_files_rejects_path_outside_workspace(tmp_path):
+    result = list_files(str(tmp_path))
+    assert "restricted to the workspace directory" in result
+
+
+def test_list_files_allows_workspace_directory():
+    result = list_files(str(WORKSPACE_ROOT))
+    assert "restricted to the workspace directory" not in result

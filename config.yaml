@@ -8,4 +8,7 @@
 tools:
   safety:
     shell_confirm_destructive: true
-    allowed_commands: []  # Empty = all allowed (use with caution)
+    allowed_commands: []  # Empty = fall back to blocked_commands below. Non-empty = only these commands run.
+    # blocked_commands: []  # Uncomment to override the default destructive-command blocklist
+    # (rm, mv, dd, mkfs, shutdown, reboot, halt, chmod, chown, kill, killall, pkill).
+    # Only checked when allowed_commands is empty; an allowlist is already stricter.

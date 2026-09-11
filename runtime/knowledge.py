@@ -121,18 +121,21 @@ class KnowledgeManager:
         return f"Removed '{source_name}' from {self.agent_id}'s knowledge base"
 
     def ingest_url(self, url: str, source_name: str = "") -> str:
-        import httpx
         import html2text
         from urllib.parse import urlparse
 
-        response = httpx.get(
-            url,
-            follow_redirects=True,
-            timeout=60.0,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-            },
-        )
+        from tools.net_safety import UnsafeURLError, safe_get
+
+        try:
+            response = safe_get(
+                url,
+                timeout=60.0,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                },
+            )
+        except UnsafeURLError as e:
+            return f"Error: {e}"
         response.raise_for_status()
 
         h = html2text.HTML2Text()

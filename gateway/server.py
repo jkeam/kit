@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 import uvicorn
 import json
 import asyncio
+import base64
 import secrets
 import re
 import uuid
@@ -31,6 +32,7 @@ import random
 import os
 from env_config import env_int
 from gateway.session_manager import SessionManager, make_session_id
+from gateway.rate_limit import check_rate_limit
 from gateway.scheduler import run_scheduler
 from gateway.dreamer import run_dream_cycle, list_dreams, get_dream
 from runtime.memory import MemoryManager
@@ -56,16 +58,50 @@ def _require_gateway_token(authorization: Optional[str] = Header(default=None)) 
         raise HTTPException(status_code=401, detail="Invalid gateway token")
 
 
-def _websocket_token_valid(websocket: WebSocket) -> bool:
-    """Same check as _require_gateway_token, adapted for the WebSocket
-    handshake (browsers can't set custom headers on a WS connection, so the
-    token travels as a query param instead: `/ws?token=...`)."""
+WS_TOKEN_SUBPROTOCOL_PREFIX = "kit-token."
+
+
+def _decode_ws_token_subprotocol(value: str) -> Optional[str]:
+    """Decode a `kit-token.<base64url>` WebSocket subprotocol value back to
+    the raw token string, or None if `value` isn't in that form."""
+    if not value.startswith(WS_TOKEN_SUBPROTOCOL_PREFIX):
+        return None
+    encoded = value[len(WS_TOKEN_SUBPROTOCOL_PREFIX):]
+    padded = encoded + "=" * (-len(encoded) % 4)
+    try:
+        return base64.urlsafe_b64decode(padded).decode("utf-8")
+    except Exception:
+        return None
+
+
+def _websocket_auth(websocket: WebSocket) -> tuple[bool, Optional[str]]:
+    """Validate GATEWAY_TOKEN for a WebSocket handshake.
+
+    Returns (is_valid, matched_subprotocol). Two ways for the token to
+    travel, checked in preference order:
+
+    1. `Sec-WebSocket-Protocol: kit-token.<base64url token>` - a real
+       handshake header, not part of the URL, so it doesn't end up in
+       access logs, proxy logs, or browser history the way a query param
+       does. When this is how auth succeeded, `matched_subprotocol` must be
+       echoed back in `websocket.accept(subprotocol=...)`.
+    2. `?token=...` query param - kept for backward compatibility, since
+       not every WS client can set a custom subprotocol.
+    """
     token = os.environ.get("GATEWAY_TOKEN")
     if not token:
-        return True
+        return True, None
+
+    for offered in websocket.scope.get("subprotocols", []):
+        decoded = _decode_ws_token_subprotocol(offered)
+        if decoded is not None and secrets.compare_digest(decoded, token):
+            return True, offered
 
     provided = websocket.query_params.get("token")
-    return bool(provided) and secrets.compare_digest(provided, token)
+    if provided and secrets.compare_digest(provided, token):
+        return True, None
+
+    return False, None
 
 
 def _now() -> str:
@@ -118,8 +154,8 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, subprotocol: Optional[str] = None):
+        await websocket.accept(subprotocol=subprotocol)
         self.active_connections.add(websocket)
 
     def disconnect(self, websocket: WebSocket):
@@ -258,6 +294,9 @@ async def chat(request: ChatRequest):
     if not session_manager:
         raise HTTPException(status_code=500, detail="Session manager not initialized")
 
+    if not check_rate_limit(f"{request.platform}:{request.user_id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded, try again shortly")
+
     try:
         session_id = make_session_id(request.platform, request.user_id, request.agent_id)
 
@@ -312,6 +351,9 @@ async def chat_stream(request: ChatRequest):
     """Stream assistant responses as Server-Sent Events."""
     if not session_manager:
         raise HTTPException(status_code=500, detail="Session manager not initialized")
+
+    if not check_rate_limit(f"{request.platform}:{request.user_id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded, try again shortly")
 
     session_id = make_session_id(request.platform, request.user_id, request.agent_id)
     session_manager.save_message(session_id, "user", request.message)
@@ -371,6 +413,9 @@ async def broadcast_message(request: BroadcastRequest):
     """Post a broadcast message visible to all agents."""
     if not session_manager:
         raise HTTPException(status_code=500, detail="Session manager not initialized")
+
+    if not check_rate_limit(f"broadcast:{request.platform}:{request.user_id}"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded, try again shortly")
 
     mem = MemoryManager(str(session_manager.agent_registry.workspace_dir))
     mem.save_broadcast(request.message)
@@ -1077,15 +1122,16 @@ async def websocket_endpoint(websocket: WebSocket):
     - Server sends events: chat_message, session_update, tool_execution
     - Client can send: ping, subscribe
 
-    Requires ?token=<GATEWAY_TOKEN> in the connection URL when GATEWAY_TOKEN
-    is set (browsers can't attach an Authorization header to a WebSocket
-    handshake, so the token travels as a query param here instead).
+    Requires GATEWAY_TOKEN auth when GATEWAY_TOKEN is set, via either the
+    `kit-token.<base64url token>` WebSocket subprotocol (preferred - see
+    _websocket_auth) or a `?token=...` query param (legacy fallback).
     """
-    if not _websocket_token_valid(websocket):
+    is_valid, matched_subprotocol = _websocket_auth(websocket)
+    if not is_valid:
         await websocket.close(code=1008)
         return
 
-    await manager.connect(websocket)
+    await manager.connect(websocket, subprotocol=matched_subprotocol)
 
     try:
         # Send welcome message
@@ -1122,6 +1168,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     user_msg = message.get("message", "")
                     user_msg_id = message.get("message_id", str(uuid.uuid4()))
                     session_id = make_session_id(platform, user_id, agent_id)
+
+                    if not check_rate_limit(f"{platform}:{user_id}"):
+                        await websocket.send_json({
+                            "type": "stream_error",
+                            "session_id": session_id,
+                            "error": "Rate limit exceeded, try again shortly",
+                            "timestamp": _now(),
+                        })
+                        continue
 
                     session_manager.save_message(session_id, "user", user_msg, message_id=user_msg_id)
 
@@ -1172,7 +1227,17 @@ async def websocket_endpoint(websocket: WebSocket):
                     session_id = message.get("session_id", "")
                     emoji = message.get("emoji", "")
                     user_id = message.get("user_id", "anonymous")
-                    if msg_id and emoji and session_id:
+                    # Require the reaction to reference a message that
+                    # actually exists in that session, rather than trusting
+                    # a client-supplied session_id outright - stops a client
+                    # from injecting reactions into a session_id it merely
+                    # guessed rather than one it has actually seen traffic
+                    # for.
+                    target_exists = msg_id and session_id and any(
+                        m.get("message_id") == msg_id
+                        for m in session_manager.get_messages(session_id)
+                    )
+                    if msg_id and emoji and session_id and target_exists:
                         session_manager.save_message(
                             session_id, "user_reactions", "",
                             message_id=msg_id, emoji=emoji, user_id=user_id,
@@ -1192,6 +1257,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     user_msg = message.get("message", "")
                     msg_id = message.get("message_id", str(uuid.uuid4()))
                     session_id = _broadcast_session_id(platform, user_id)
+
+                    if not check_rate_limit(f"broadcast:{platform}:{user_id}"):
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Rate limit exceeded, try again shortly",
+                        })
+                        continue
 
                     mem = MemoryManager(str(session_manager.agent_registry.workspace_dir))
                     mem.save_broadcast(user_msg)

@@ -2695,6 +2695,18 @@ if (skillEditorOverlay) {
     });
 }
 
+// Encode a GATEWAY_TOKEN as a WebSocket subprotocol value. The
+// Sec-WebSocket-Protocol token grammar doesn't allow arbitrary characters,
+// so the raw token is base64url-encoded; the server reverses this in
+// gateway/server.py's _decode_ws_token_subprotocol.
+function wsTokenSubprotocol(token) {
+    const bytes = new TextEncoder().encode(token);
+    let binary = '';
+    bytes.forEach((b) => { binary += String.fromCharCode(b); });
+    const b64 = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return `kit-token.${b64}`;
+}
+
 // WebSocket connection
 function connectWebSocket() {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -2703,12 +2715,14 @@ function connectWebSocket() {
 
     try {
         // Browsers can't set an Authorization header on a WebSocket
-        // handshake, so the token (when we have one) travels as a query
-        // param instead — matches the server's _websocket_token_valid check.
-        const wsUrl = authToken
-            ? `${WS_BASE}/ws?token=${encodeURIComponent(authToken)}`
-            : `${WS_BASE}/ws`;
-        ws = new WebSocket(wsUrl);
+        // handshake. The token (when we have one) travels as a
+        // Sec-WebSocket-Protocol value instead of a query param — that's a
+        // real handshake header, not part of the URL, so it doesn't end up
+        // in access logs, proxy logs, or browser history the way
+        // ?token=... would. Matches the server's _websocket_auth check.
+        const wsUrl = `${WS_BASE}/ws`;
+        const protocols = authToken ? [wsTokenSubprotocol(authToken)] : undefined;
+        ws = new WebSocket(wsUrl, protocols);
 
         ws.onopen = () => {
             console.log('WebSocket connected');

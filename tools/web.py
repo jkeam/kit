@@ -9,6 +9,7 @@ import html2text
 import httpx
 
 from env_config import env_float
+from tools.net_safety import UnsafeURLError, safe_get
 
 WEB_FETCH_TIMEOUT_SECONDS = env_float("WEB_FETCH_TIMEOUT_SECONDS", 30.0)
 
@@ -102,10 +103,9 @@ def web_fetch(url: str, max_chars: int = 10000) -> str:
         Page content as markdown
     """
     try:
-        # Fetch page
-        response = httpx.get(
+        # Fetch page (redirect hops are validated too - see tools/net_safety.py)
+        response = safe_get(
             url,
-            follow_redirects=True,
             timeout=WEB_FETCH_TIMEOUT_SECONDS,
             headers={
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
@@ -128,6 +128,8 @@ def web_fetch(url: str, max_chars: int = 10000) -> str:
 
         return f"# Content from {url}\n\n{markdown}"
 
+    except UnsafeURLError as e:
+        return f"Error: {e}"
     except httpx.HTTPError as e:
         return f"Error fetching URL: {e}"
     except Exception as e:

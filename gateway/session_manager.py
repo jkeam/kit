@@ -6,7 +6,10 @@ Session ID format: {platform}:{user_id}
 Example: telegram:123456789, discord:987654321, cli:local
 """
 
+import contextlib
+import fcntl
 import json
+import os
 from collections import deque
 from pathlib import Path
 from typing import Callable, Dict, Optional, List, AsyncGenerator, Any, Awaitable
@@ -304,6 +307,29 @@ class SessionManager:
         safe_name = session_id.replace(":", "_").replace("/", "_")
         return self.sessions_dir / f"{safe_name}.json"
 
+    @contextlib.contextmanager
+    def _locked_session_file(self, session_id: str):
+        """Advisory exclusive lock serializing read-modify-write access to a
+        session's JSON file across threads and processes (e.g. concurrent
+        requests to the same session, or multiple uvicorn workers) so one
+        write can't clobber another."""
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = Path(str(self._session_file(session_id)) + ".lock")
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+    @staticmethod
+    def _atomic_write(path: Path, content: str) -> None:
+        """Write via temp file + rename so a crash mid-write can't leave a
+        truncated/corrupt session file behind."""
+        tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+        tmp_path.write_text(content)
+        os.replace(tmp_path, path)
+
     def save_message(
         self, session_id: str, role: str, content: str, sender: Optional[str] = None, **extras
     ) -> None:
@@ -317,14 +343,7 @@ class SessionManager:
         Any additional keyword arguments are stored verbatim on the entry
         (e.g. message_id, reactions).
         """
-        self.sessions_dir.mkdir(parents=True, exist_ok=True)
         path = self._session_file(session_id)
-        messages = []
-        if path.exists():
-            try:
-                messages = json.loads(path.read_text())
-            except (json.JSONDecodeError, OSError):
-                messages = []
         entry = {
             "role": role,
             "content": content,
@@ -333,8 +352,16 @@ class SessionManager:
         if sender is not None:
             entry["sender"] = sender
         entry.update(extras)
-        messages.append(entry)
-        path.write_text(json.dumps(messages))
+
+        with self._locked_session_file(session_id):
+            messages = []
+            if path.exists():
+                try:
+                    messages = json.loads(path.read_text())
+                except (json.JSONDecodeError, OSError):
+                    messages = []
+            messages.append(entry)
+            self._atomic_write(path, json.dumps(messages))
 
     def get_messages(self, session_id: str) -> List[Dict[str, str]]:
         """Load persisted messages for a session."""
@@ -349,8 +376,9 @@ class SessionManager:
     def clear_messages(self, session_id: str) -> None:
         """Delete persisted messages for a session."""
         path = self._session_file(session_id)
-        if path.exists():
-            path.unlink()
+        with self._locked_session_file(session_id):
+            if path.exists():
+                path.unlink()
 
     @staticmethod
     def _parse_session_id(session_id: str) -> tuple[str, str, str]:
