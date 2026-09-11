@@ -309,6 +309,15 @@ class PersonalAssistant:
             parts.append("\n\n---\n\n")
             parts.append(self.agents_md)
 
+        prompt_skills = self.skills.get_prompt_skills(names=self.allowed_skills)
+        if prompt_skills:
+            parts.append("\n\n---\n\n")
+            parts.append("# SKILLS\n\n")
+            for skill in prompt_skills:
+                parts.append(f"## {skill['name']}\n\n")
+                parts.append(skill["content"])
+                parts.append("\n\n")
+
         roster_section = self._team_roster_section()
         if roster_section:
             parts.append("\n\n---\n\n")
@@ -407,7 +416,8 @@ class PersonalAssistant:
                 description=tool_args["description"],
                 code=tool_args["code"],
                 parameters=params,
-                tags=tags
+                tags=tags,
+                skill_type=tool_args.get("skill_type", "executable"),
             )
             self._reindex_memory()
             return result

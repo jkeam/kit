@@ -18,7 +18,7 @@ This guide covers everything from first-time setup to advanced multi-agent orche
 8. [Delegation](#delegation)
 9. [Concurrent Delegation](#concurrent-delegation)
 10. [Sequential Orchestration](#sequential-orchestration)
-11. [Skills](#skills)
+11. [Custom Tools & Skills](#custom-tools--skills)
 12. [Scheduling](#scheduling)
 13. [Web UI](#web-ui)
 14. [REST API](#rest-api)
@@ -176,15 +176,15 @@ Kit and its agents have access to 17+ built-in tools, scoped per agent:
 | `schedule_list` | List all schedules |
 | `schedule_delete` | Delete a schedule |
 
-### Skills
+### Custom Tools & Skills
 | Tool | Description |
 |------|-------------|
-| `skill_create` | Create a new user-defined skill |
-| `skill_list` | List available skills |
-| `skill_execute` | Run a skill |
-| `skill_improve` | Update an existing skill |
-| `skill_delete` | Delete a skill |
-| `skill_info` | Get details about a skill |
+| `skill_create` | Create a new custom tool (Python) or skill (markdown guide) |
+| `skill_list` | List available custom tools and skills |
+| `skill_execute` | Run a custom tool |
+| `skill_improve` | Update an existing custom tool or skill |
+| `skill_delete` | Delete a custom tool or skill |
+| `skill_info` | Get details about a custom tool or skill |
 
 ### Delegation
 | Tool | Description |
@@ -247,7 +247,7 @@ Templates are blueprints for creating agents. Kit ships with four built-in templ
 
 A software developer that can read, write, and execute code.
 
-- **Tools**: read, write, list_files, exec_shell, memory, knowledge, web, skills
+- **Tools**: read, write, list_files, exec_shell, memory, knowledge, web, custom tools & skills
 - **Persona**: Precise, minimal diffs, verifies own work
 
 ### researcher
@@ -371,7 +371,7 @@ When creating an agent, you can override the template defaults:
 | `name` | Display name |
 | `description` | What this agent does (shown in Kit's team roster) |
 | `tool_overrides` | Override the template's tool list |
-| `skill_overrides` | Override the template's skill list |
+| `skill_overrides` | Override the template's custom tool & skill list |
 | `soul_overrides` | Override the template's persona |
 | `model` | Use a different LLM model for this agent |
 | `provider` | Use a different LLM provider for this agent |
@@ -532,45 +532,74 @@ Then have David implement a unified approach based on both findings.
 
 ---
 
-## Skills
+## Custom Tools & Skills
 
-Skills are user-created Python scripts that extend Kit's capabilities without modifying Kit's core code.
+Kit supports two types of user-created extensions in `workspace/skills/`:
 
-### How Skills Work
+- **Custom tools** (`.py`) — sandboxed Python scripts that run on demand and return results
+- **Skills** (`.md`) — markdown domain guides that are automatically injected into the agent's context to provide expertise (compatible with NVIDIA SKILL.md format)
 
-- Skills live in `workspace/skills/` as Python scripts
-- They receive JSON via stdin and output JSON via stdout
+Both are auto-discovered on startup.
+
+### Custom Tools
+
+Custom tools are Python scripts that extend what agents can do.
+
 - Any agent with `skill_execute` in its tool list can run them
-- Skills are auto-discovered on startup
-
-### Creating a Skill
+- They run in a sandboxed subprocess with restricted imports
 
 Ask Kit or a developer agent:
 
 ```
-Create a skill called "word-count" that counts the words in a given text.
+Create a custom tool called "word-count" that counts the words in a given text.
 ```
 
 Or create one manually at `workspace/skills/word-count.py`:
 
 ```python
-import json
-import sys
-
-params = json.loads(sys.stdin.read())
-text = params.get("text", "")
-count = len(text.split())
-print(json.dumps({"result": f"{count} words"}))
-```
-
-### Using Skills
-
-```
-Run the word-count skill with text "hello world foo bar"
+def main(**kwargs):
+    text = kwargs.get("text", "")
+    words = len(text.split())
+    lines = text.count("\n") + (1 if text else 0)
+    chars = len(text)
+    return f"{words} words, {lines} lines, {chars} characters"
 ```
 
 ```
-List all available skills.
+Run the word-count custom tool with text "hello world foo bar"
+```
+
+### Skills
+
+Skills are markdown guides that give agents domain expertise. They use YAML frontmatter for metadata and are loaded into the agent's system prompt automatically.
+
+Create one manually at `workspace/skills/python-best-practices.md`:
+
+```markdown
+---
+name: python-best-practices
+description: Python coding standards and best practices
+metadata:
+  tags:
+    - python
+    - coding
+---
+
+# Python Best Practices
+
+Always use type hints for function signatures...
+```
+
+Or ask Kit:
+
+```
+Create a prompt skill called "python-best-practices" with guidelines for writing clean Python code.
+```
+
+### Listing Custom Tools & Skills
+
+```
+List all available custom tools and skills.
 ```
 
 ---
@@ -605,6 +634,7 @@ The web UI at http://localhost:18789 is built with PatternFly v5 and provides:
 - **Tools** -- explore available tools and their parameters
 - **Schedules** -- manage recurring tasks
 - **Agents** -- view, create, and manage team agents
+- **Custom Tools & Skills** -- create, edit, and manage custom tools (Python) and skills (markdown guides) via a built-in editor with a type toggle, syntax highlighting, and examples
 
 ### Real-time Updates
 
@@ -689,6 +719,34 @@ curl http://localhost:18789/agents/dev-1/knowledge
 curl http://localhost:18789/agents/dev-1/knowledge/curated
 ```
 
+### Custom Tools & Skills
+
+```bash
+# List all custom tools and skills
+curl http://localhost:18789/skills
+
+# Get a specific custom tool or skill (includes source code/content)
+curl http://localhost:18789/skills/word-count
+
+# Create a custom tool
+curl -X POST http://localhost:18789/skills \
+  -H "Content-Type: application/json" \
+  -d '{"name": "word-count", "description": "Count words in text", "code": "def main(**kwargs):\n    return str(len(kwargs.get(\"text\", \"\").split()))", "skill_type": "executable"}'
+
+# Create a skill (markdown guide)
+curl -X POST http://localhost:18789/skills \
+  -H "Content-Type: application/json" \
+  -d '{"name": "python-style", "description": "Python coding standards", "code": "# Python Style Guide\n\nUse type hints...", "skill_type": "prompt"}'
+
+# Update a custom tool or skill
+curl -X PUT http://localhost:18789/skills/word-count \
+  -H "Content-Type: application/json" \
+  -d '{"code": "def main(**kwargs):\n    text = kwargs.get(\"text\", \"\")\n    return f\"{len(text.split())} words\"", "changes": "simplified output"}'
+
+# Delete a custom tool or skill
+curl -X DELETE http://localhost:18789/skills/word-count
+```
+
 ---
 
 ## Configuration
@@ -735,7 +793,7 @@ tools:
 | `workspace/agent_templates/` | User-defined templates |
 | `workspace/memory/` | Daily conversation logs |
 | `workspace/schedules/` | Scheduled task definitions |
-| `workspace/skills/` | User-created skills |
+| `workspace/skills/` | Custom tools (`.py`) and skills (`.md`) |
 
 ---
 

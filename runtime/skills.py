@@ -1,14 +1,17 @@
 """
 Skills Manager - Learn and execute reusable skills.
 
-Skills are auto-generated Python functions that the assistant creates
-from repeated patterns or explicit requests.
+Supports two skill types:
+  - executable (.py) — Python functions run in a sandboxed subprocess
+  - prompt (.md) — Markdown guides injected into the system prompt to
+    give the agent domain expertise (NVIDIA SKILL.md format compatible)
 """
 
 import builtins
 import json
 import subprocess
 import sys
+import yaml
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -82,9 +85,25 @@ class SkillsManager:
             return json.loads(self.metadata_file.read_text())
         return {}
 
+    @staticmethod
+    def _parse_md_frontmatter(text: str) -> Dict[str, Any]:
+        """Extract YAML frontmatter and body from a markdown skill file."""
+        frontmatter: Dict[str, Any] = {}
+        body = text
+        if text.startswith("---"):
+            parts = text.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    frontmatter = yaml.safe_load(parts[1]) or {}
+                except yaml.YAMLError:
+                    pass
+                body = parts[2].strip()
+        return {"frontmatter": frontmatter, "body": body}
+
     def _discover_skills(self):
-        """Register any .py skill files on disk that are missing from metadata."""
+        """Register any .py/.md skill files on disk that are missing from metadata."""
         changed = False
+
         for path in self.skills_dir.glob("*.py"):
             name = path.stem
             if name in self.metadata:
@@ -107,6 +126,7 @@ class SkillsManager:
             self.metadata[name] = {
                 "name": name,
                 "description": description,
+                "type": "executable",
                 "created_at": datetime.now().isoformat(),
                 "version": version,
                 "success_rate": 0.0,
@@ -118,6 +138,45 @@ class SkillsManager:
                 "last_improved": None,
             }
             changed = True
+
+        for path in self.skills_dir.glob("*.md"):
+            if path.name == "skills_metadata.json":
+                continue
+            name = path.stem
+            if name in self.metadata:
+                continue
+            description = name.replace("-", " ").replace("_", " ")
+            tags: List[str] = []
+            try:
+                parsed = self._parse_md_frontmatter(path.read_text())
+                fm = parsed["frontmatter"]
+                if fm.get("description"):
+                    description = fm["description"]
+                if fm.get("name"):
+                    name = fm["name"]
+                meta_block = fm.get("metadata") or {}
+                if isinstance(meta_block.get("tags"), list):
+                    tags = meta_block["tags"]
+                elif isinstance(fm.get("tags"), list):
+                    tags = fm["tags"]
+            except OSError:
+                pass
+            self.metadata[name] = {
+                "name": name,
+                "description": description,
+                "type": "prompt",
+                "created_at": datetime.now().isoformat(),
+                "version": 1,
+                "success_rate": 0.0,
+                "usage_count": 0,
+                "success_count": 0,
+                "parameters": {},
+                "tags": tags,
+                "last_used": None,
+                "last_improved": None,
+            }
+            changed = True
+
         if changed:
             self._save_metadata()
 
@@ -131,7 +190,8 @@ class SkillsManager:
         description: str,
         code: str,
         parameters: Optional[Dict[str, str]] = None,
-        tags: Optional[List[str]] = None
+        tags: Optional[List[str]] = None,
+        skill_type: str = "executable",
     ) -> str:
         """
         Create a new skill.
@@ -139,30 +199,43 @@ class SkillsManager:
         Args:
             name: Skill name (kebab-case)
             description: What the skill does
-            code: Python code implementation
-            parameters: Parameter descriptions
+            code: Python code for executable skills, or markdown body for
+                prompt skills
+            parameters: Parameter descriptions (executable skills only)
             tags: Categorization tags
+            skill_type: "executable" (default) for Python scripts, or
+                "prompt" for markdown guides injected into context
 
         Returns:
             Success message or error
 
         Note:
-            Skills run in a dedicated subprocess with restricted builtins
-            and a small stdlib import allowlist (see _SAFE_MODULES /
-            _SAFE_BUILTIN_NAMES) — no filesystem, network, subprocess, or
-            arbitrary imports, and no access to the gateway process itself.
+            Executable skills run in a dedicated subprocess with restricted
+            builtins and a small stdlib import allowlist (see _SAFE_MODULES /
+            _SAFE_BUILTIN_NAMES). Prompt skills are injected into the system
+            prompt and never executed.
         """
         # Validate name
         if not name.replace("-", "").replace("_", "").isalnum():
             return f"Error: Invalid skill name '{name}'. Use alphanumeric with - or _"
 
-        skill_file = self.skills_dir / f"{name}.py"
+        ext = ".md" if skill_type == "prompt" else ".py"
+        skill_file = self.skills_dir / f"{name}{ext}"
 
-        if skill_file.exists():
-            return f"Error: Skill '{name}' already exists. Use improve_skill to update."
+        if name in self.metadata or skill_file.exists():
+            kind = "Skill" if skill_type == "prompt" else "Custom tool"
+            return f"Error: {kind} '{name}' already exists. Use improve_skill to update."
 
-        # Create skill file with metadata
-        skill_content = f'''"""
+        if skill_type == "prompt":
+            tag_list = tags or []
+            frontmatter = yaml.dump({
+                "name": name,
+                "description": description,
+                "metadata": {"tags": tag_list} if tag_list else {},
+            }, default_flow_style=False).strip()
+            skill_content = f"---\n{frontmatter}\n---\n\n{code}\n"
+        else:
+            skill_content = f'''"""
 Skill: {name}
 Description: {description}
 Created: {datetime.now().isoformat()}
@@ -179,6 +252,7 @@ Version: 1
             self.metadata[name] = {
                 "name": name,
                 "description": description,
+                "type": skill_type,
                 "created_at": datetime.now().isoformat(),
                 "version": 1,
                 "success_rate": 0.0,
@@ -191,7 +265,8 @@ Version: 1
             }
             self._save_metadata()
 
-            return f"✅ Skill '{name}' created successfully!\nFile: {skill_file}"
+            label = "Skill" if skill_type == "prompt" else "Custom tool"
+            return f"✅ {label} '{name}' created successfully!\nFile: {skill_file}"
 
         except Exception as e:
             return f"Error creating skill: {e}"
@@ -209,7 +284,7 @@ Version: 1
             Formatted list of skills
         """
         if not self.metadata:
-            return "No skills created yet."
+            return "No custom tools or skills created yet."
 
         skills = self.metadata.values()
 
@@ -221,14 +296,22 @@ Version: 1
             skills = [s for s in skills if tag in s.get("tags", [])]
 
         if not skills:
-            return f"No skills found with tag '{tag}'" if tag else "No skills found"
+            return f"No items found with tag '{tag}'" if tag else "No custom tools or skills found"
 
         # Format output
-        lines = ["Available Skills:\n"]
+        lines = ["Available Custom Tools & Skills:\n"]
         for skill in sorted(skills, key=lambda s: s["usage_count"], reverse=True):
-            lines.append(f"📦 **{skill['name']}** (v{skill['version']})")
-            lines.append(f"   {skill['description']}")
-            lines.append(f"   Usage: {skill['usage_count']} times | Success: {skill['success_rate']:.1%}")
+            skill_type = skill.get("type", "executable")
+            if skill_type == "prompt":
+                type_label = "skill"
+                lines.append(f"📖 **{skill['name']}** (v{skill['version']}, {type_label})")
+                lines.append(f"   {skill['description']}")
+                lines.append("   Type: skill (domain guide loaded into context automatically)")
+            else:
+                type_label = "custom tool"
+                lines.append(f"📦 **{skill['name']}** (v{skill['version']}, {type_label})")
+                lines.append(f"   {skill['description']}")
+                lines.append(f"   Usage: {skill['usage_count']} times | Success: {skill['success_rate']:.1%}")
 
             if skill.get('parameters'):
                 param_parts = [f"{k}: {v}" for k, v in skill['parameters'].items()]
@@ -266,6 +349,9 @@ Version: 1
         """
         if name not in self.metadata:
             return f"Error: Skill '{name}' not found"
+
+        if self.metadata[name].get("type") == "prompt":
+            return f"Error: '{name}' is a skill (domain guide loaded into context automatically), not a custom tool — it cannot be executed"
 
         skill_file = self.skills_dir / f"{name}.py"
         if not skill_file.exists():
@@ -345,21 +431,31 @@ Version: 1
         if name not in self.metadata:
             return f"Error: Skill '{name}' not found"
 
-        skill_file = self.skills_dir / f"{name}.py"
+        meta = self.metadata[name]
+        is_prompt = meta.get("type") == "prompt"
+        ext = ".md" if is_prompt else ".py"
+        skill_file = self.skills_dir / f"{name}{ext}"
         if not skill_file.exists():
-            return f"Error: Skill file for '{name}' not found"
+            return f"Error: file for '{name}' not found"
 
         try:
-            meta = self.metadata[name]
-
             # Backup old version
-            backup_file = self.skills_dir / f"{name}.v{meta['version']}.py.bak"
+            backup_file = self.skills_dir / f"{name}.v{meta['version']}{ext}.bak"
             backup_file.write_text(skill_file.read_text())
 
             # Update code if provided
             if code:
                 new_version = meta['version'] + 1
-                skill_content = f'''"""
+                if is_prompt:
+                    tag_list = meta.get("tags", [])
+                    frontmatter = yaml.dump({
+                        "name": name,
+                        "description": meta["description"],
+                        "metadata": {"tags": tag_list} if tag_list else {},
+                    }, default_flow_style=False).strip()
+                    skill_content = f"---\n{frontmatter}\n---\n\n{code}\n"
+                else:
+                    skill_content = f'''"""
 Skill: {name}
 Description: {meta['description']}
 Created: {meta['created_at']}
@@ -403,7 +499,8 @@ Changes in v{new_version}: {changes}
         if name not in self.metadata:
             return f"Error: Skill '{name}' not found"
 
-        skill_file = self.skills_dir / f"{name}.py"
+        ext = ".md" if self.metadata[name].get("type") == "prompt" else ".py"
+        skill_file = self.skills_dir / f"{name}{ext}"
 
         try:
             # Remove file
@@ -418,6 +515,36 @@ Changes in v{new_version}: {changes}
 
         except Exception as e:
             return f"Error deleting skill: {e}"
+
+    def get_prompt_skills(self, names: Optional[set] = None) -> List[Dict[str, str]]:
+        """Return the content of all prompt-type skills for system prompt injection.
+
+        Args:
+            names: Optional set of skill names to restrict to (for scoped agents).
+                None means unrestricted.
+
+        Returns:
+            List of dicts with 'name', 'description', and 'content' keys.
+        """
+        results = []
+        for meta in self.metadata.values():
+            if meta.get("type") != "prompt":
+                continue
+            if names is not None and meta["name"] not in names:
+                continue
+            skill_file = self.skills_dir / f"{meta['name']}.md"
+            if not skill_file.exists():
+                continue
+            try:
+                parsed = self._parse_md_frontmatter(skill_file.read_text())
+                results.append({
+                    "name": meta["name"],
+                    "description": meta["description"],
+                    "content": parsed["body"],
+                })
+            except OSError:
+                continue
+        return results
 
     def get_stats(self) -> Dict[str, Any]:
         """Get skills statistics."""

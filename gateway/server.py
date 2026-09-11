@@ -882,6 +882,7 @@ class SkillCreateRequest(BaseModel):
     code: str
     parameters: Optional[Dict[str, str]] = None
     tags: Optional[List[str]] = None
+    skill_type: str = "executable"
 
 
 class SkillUpdateRequest(BaseModel):
@@ -901,8 +902,12 @@ async def get_skill(name: str):
     meta = mgr.get_skill_info(name)
     if not meta:
         raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
-    skill_file = mgr.skills_dir / f"{name}.py"
+    ext = ".md" if meta.get("type") == "prompt" else ".py"
+    skill_file = mgr.skills_dir / f"{name}{ext}"
     code = skill_file.read_text() if skill_file.exists() else ""
+    if meta.get("type") == "prompt" and code:
+        parsed = mgr._parse_md_frontmatter(code)
+        code = parsed["body"]
     return {**meta, "code": code}
 
 
@@ -918,6 +923,7 @@ async def create_skill(request: SkillCreateRequest):
         code=request.code,
         parameters=request.parameters,
         tags=request.tags,
+        skill_type=request.skill_type,
     )
     if result.startswith("Error"):
         raise HTTPException(status_code=400, detail=result)

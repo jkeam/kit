@@ -88,7 +88,7 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
                          ↓
                     SessionManager (isolates by platform:user_id)
                          ↓
-                    Runtime (Memory + Tools + Skills)
+                    Runtime (Memory + Tools + Custom Tools & Skills)
 ```
 
 ### Core Components
@@ -102,7 +102,7 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
 - `agent.py`: `PersonalAssistant` class - main orchestration logic
   - Builds system prompt from SOUL.md + AGENTS.md + memory context
   - Handles ReAct tool-use loop via LlamaStack
-  - Coordinates memory, embeddings, and skills
+  - Coordinates memory, embeddings, custom tools, and skills
 - `memory.py`: `MemoryManager` - 3-layer memory system
   - Long-term: `workspace/MEMORY.md` (curated facts)
   - Daily logs: `workspace/memory/YYYY-MM-DD.md` (conversation history)
@@ -111,10 +111,10 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
   - Uses SentenceTransformer (all-MiniLM-L6-v2)
   - Indexes workspace/ directory recursively
   - Provides semantic_search(query, k=5) for memory retrieval
-- `skills.py`: `SkillsManager` - dynamic skill loading/execution
-  - Discovers Python scripts in `workspace/skills/`
-  - Executes via subprocess with JSON input/output
-  - Skills are tools that users can create without modifying code
+- `skills.py`: `SkillsManager` - manages custom tools and skills
+  - Custom tools (`.py`): sandboxed Python scripts executed via subprocess
+  - Skills (`.md`): markdown domain guides injected into the system prompt (NVIDIA SKILL.md format compatible)
+  - Both are auto-discovered from `workspace/skills/`
 
 **tools/** - 17 built-in tools
 - `core.py`: File ops (read, write, list_files), shell (exec_shell), memory (memory_write, memory_get, memory_search)
@@ -125,7 +125,7 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
 - `scheduler.py`: schedule_create, schedule_list, schedule_delete
   - Stores schedules as JSON in `workspace/schedules/`
   - Background cron runner checks every 60s and sends due tasks to the assistant via isolated sessions
-- `skills.py`: skill_list, skill_execute (dynamic tool system)
+- `skills.py`: skill_list, skill_execute, skill_create (custom tools & skills management)
 
 **workspace/** - Memory and user data
 - `SOUL.md`: Core personality and behavior (loaded into system prompt)
@@ -134,10 +134,10 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
 - `USER.md`: User preferences and context
 - `memory/`: Daily logs (auto-generated: YYYY-MM-DD.md)
 - `schedules/`: Schedule JSON files
-- `skills/`: User-created Python skills (dynamically loaded)
+- `skills/`: Custom tools (`.py`) and skills (`.md`), dynamically loaded
 
 **web/** - PatternFly-based frontend
-- `index.html`: Main UI with tabs (Chat, Sessions, Memory, Tools, Schedules)
+- `index.html`: Main UI with tabs (Chat, Sessions, Memory, Tools, Schedules, Custom Tools & Skills)
 - `app.js`: WebSocket client, real-time updates, multi-tab broadcasting
 - `styles.css`: PatternFly v5 theming
 - Served by gateway at `/` and `/static/`
@@ -167,11 +167,11 @@ User → Web UI/CLI → Gateway (FastAPI) → PersonalAssistant → LlamaStack �
 - Used for: chat messages, session updates, tool executions
 - Auto-reconnects on disconnect (2-10s backoff)
 
-**Skills System** (`runtime/skills.py` + `tools/skills.py`)
-- Users can add Python scripts to `workspace/skills/`
-- Scripts receive JSON via stdin, output JSON to stdout
-- Auto-discovered and registered as tools
-- Example: `workspace/skills/count-python-files.py`
+**Custom Tools & Skills** (`runtime/skills.py` + `tools/skills.py`)
+- Custom tools (`.py`): sandboxed Python scripts, executed via subprocess on demand
+- Skills (`.md`): markdown domain guides with YAML frontmatter, injected into system prompt automatically
+- Both types live in `workspace/skills/` and are auto-discovered on startup
+- Example custom tool: `workspace/skills/count-python-files.py`
 
 ## Configuration Files
 
@@ -231,19 +231,37 @@ result = subprocess.run(
 ```
 This isolates Playwright from FastAPI's event loop (avoids asyncio conflicts)
 
-### Skills Execution Model
-Skills are Python scripts with:
-- Input: JSON via stdin
-- Output: JSON via stdout (must include "result" key)
-- Execution: subprocess with 60s timeout
+### Custom Tools & Skills
+
+**Custom tools** (`.py`) are sandboxed Python scripts:
+- Define a `main(**kwargs)` function that returns a string result
+- Execution: subprocess with 60s timeout, restricted imports
 - Discovery: automatic via SkillsManager on init
 
-Example skill structure:
+Example custom tool:
 ```python
-import json, sys
-params = json.loads(sys.stdin.read())
-# ... do work ...
-print(json.dumps({"result": "success"}))
+def main(**kwargs):
+    text = kwargs.get("text", "")
+    return f"{len(text.split())} words"
+```
+
+**Skills** (`.md`) are markdown domain guides:
+- Use YAML frontmatter for name, description, and tags (NVIDIA SKILL.md format)
+- Injected into the agent's system prompt automatically
+- Not executable — they shape how the agent thinks, not what it runs
+
+Example skill:
+```markdown
+---
+name: python-best-practices
+description: Python coding standards
+metadata:
+  tags:
+    - python
+---
+
+# Python Best Practices
+...
 ```
 
 ## Known Limitations

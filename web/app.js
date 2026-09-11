@@ -1234,7 +1234,7 @@ async function renderMemberDetails(agentId) {
 
     html += `
         <div class="details-section">
-            <div class="details-section-label">Skills</div>
+            <div class="details-section-label">Custom Tools & Skills</div>
             <div id="details-skills-list"><div class="spinner" style="margin:12px auto;"></div></div>
         </div>
     `;
@@ -1456,7 +1456,7 @@ function renderMemberEditForm(agentId) {
             <div id="edit-tools-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
-            <label class="form-label">Skills</label>
+            <label class="form-label">Custom Tools & Skills</label>
             <div id="edit-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
@@ -1698,7 +1698,7 @@ function renderCreateTemplateForm() {
             <div id="tpl-tools-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
-            <label class="form-label">Skills</label>
+            <label class="form-label">Custom Tools & Skills</label>
             <div id="tpl-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
@@ -1812,7 +1812,7 @@ async function renderEditTemplateForm(templateId) {
             <div id="tpl-tools-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
-            <label class="form-label">Skills</label>
+            <label class="form-label">Custom Tools & Skills</label>
             <div id="tpl-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
@@ -2027,7 +2027,7 @@ async function loadDetailsSkills(agentId) {
         const allowed = agent ? agent.skills : '*';
         const skills = allowed === '*' ? allSkills : allSkills.filter(s => allowed.includes(s.name));
         if (skills.length === 0) {
-            container.innerHTML = '<div class="empty-state" style="padding:10px 0;">No skills</div>';
+            container.innerHTML = '<div class="empty-state" style="padding:10px 0;">No custom tools or skills</div>';
             return;
         }
         container.innerHTML = skills.map(skill => `
@@ -2357,6 +2357,38 @@ const closeSkillEditorBtn = document.getElementById('close-skill-editor-btn');
 
 let skillEditorMode = 'create'; // 'create' | 'edit'
 let skillEditorOriginalName = null;
+let skillEditorType = 'executable'; // 'executable' | 'prompt'
+
+function setSkillEditorType(type) {
+    skillEditorType = type;
+    const isPrompt = type === 'prompt';
+
+    document.querySelectorAll('.skill-type-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.skillType === type);
+    });
+
+    document.getElementById('skill-editor-parameters-group').hidden = isPrompt;
+    document.getElementById('skill-editor-hint-executable').hidden = isPrompt;
+    document.getElementById('skill-editor-hint-prompt').hidden = !isPrompt;
+    document.getElementById('skill-editor-example-executable').hidden = isPrompt;
+    document.getElementById('skill-editor-example-prompt').hidden = !isPrompt;
+    document.getElementById('skill-editor-code-label').textContent = isPrompt ? 'Content' : 'Code';
+
+    if (skillEditorMode === 'create') {
+        const title = isPrompt ? 'New Skill' : 'New Custom Tool';
+        skillEditorTitle.textContent = title;
+        skillEditorSaveBtn.textContent = isPrompt ? 'Create Skill' : 'Create Custom Tool';
+        skillEditorName.placeholder = isPrompt ? 'e.g. python-best-practices' : 'e.g. analyze-logs';
+    }
+
+    if (skillCodeMirror) {
+        skillCodeMirror.setOption('mode', isPrompt ? 'markdown' : 'python');
+    }
+}
+
+document.querySelectorAll('.skill-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => setSkillEditorType(btn.dataset.skillType));
+});
 let skillCodeMirror = null;
 
 function ensureCodeMirror() {
@@ -2431,17 +2463,20 @@ async function loadSkillsLibrary() {
         if (!response.ok) throw new Error('Failed to load skills');
         const skills = await response.json();
         if (skills.length === 0) {
-            skillsLibraryList.innerHTML = '<p class="empty-state">No skills yet. Create one to get started.</p>';
+            skillsLibraryList.innerHTML = '<p class="empty-state">No custom tools or skills yet. Create one to get started.</p>';
             return;
         }
         const sorted = skills.sort((a, b) => b.usage_count - a.usage_count);
         skillsLibraryList.innerHTML = sorted.map(skill => {
             const tags = (skill.tags || []).map(t => `<span class="skill-tag">${escapeHtml(t)}</span>`).join('');
+            const isPrompt = skill.type === 'prompt';
+            const typeBadge = isPrompt ? 'skill' : 'custom tool';
             return `
                 <div class="skill-card" data-skill-name="${escapeAttr(skill.name)}">
                     <div class="skill-card-header">
                         <span class="skill-card-name">${escapeHtml(skill.name)}</span>
                         <div style="display:flex;align-items:center;gap:6px;">
+                            <span class="skill-tag">${typeBadge}</span>
                             <span class="skill-card-version">v${skill.version}</span>
                             <div class="skill-card-actions">
                                 <button class="btn btn-secondary skill-edit-btn" data-skill="${escapeAttr(skill.name)}" title="Edit">
@@ -2494,8 +2529,11 @@ function openSkillEditor(mode, name) {
     skillEditorOverlay.hidden = false;
     ensureCodeMirror();
 
+    const typeGroup = document.getElementById('skill-editor-type-group');
+
     if (mode === 'create') {
-        skillEditorTitle.textContent = 'New Skill';
+        typeGroup.hidden = false;
+        setSkillEditorType('executable');
         skillEditorName.value = '';
         skillEditorName.disabled = false;
         skillEditorDescription.value = '';
@@ -2503,9 +2541,8 @@ function openSkillEditor(mode, name) {
         skillEditorParameters.value = '';
         setSkillCode('');
         skillEditorChangesGroup.hidden = true;
-        skillEditorSaveBtn.textContent = 'Create Skill';
     } else {
-        skillEditorTitle.textContent = 'Edit Skill';
+        typeGroup.hidden = true;
         skillEditorSaveBtn.textContent = 'Save Changes';
         skillEditorChangesGroup.hidden = false;
         skillEditorChanges.value = '';
@@ -2528,6 +2565,8 @@ async function loadSkillIntoEditor(name) {
         const response = await apiFetch(`${API_BASE}/skills/${encodeURIComponent(name)}`);
         if (!response.ok) throw new Error('Failed to load skill');
         const skill = await response.json();
+        setSkillEditorType(skill.type || 'executable');
+        skillEditorTitle.textContent = skill.type === 'prompt' ? 'Edit Skill' : 'Edit Custom Tool';
         skillEditorDescription.value = skill.description || '';
         skillEditorTags.value = (skill.tags || []).join(', ');
         skillEditorParameters.value = formatParametersField(skill.parameters);
@@ -2563,7 +2602,7 @@ async function saveSkill() {
         return;
     }
     if (!code.trim()) {
-        skillEditorStatus.textContent = 'Code is required';
+        skillEditorStatus.textContent = skillEditorType === 'prompt' ? 'Content is required' : 'Code is required';
         skillEditorStatus.className = 'form-status error';
         return;
     }
@@ -2578,7 +2617,7 @@ async function saveSkill() {
             response = await apiFetch(`${API_BASE}/skills`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, description, code, tags, parameters }),
+                body: JSON.stringify({ name, description, code, tags, parameters, skill_type: skillEditorType }),
             });
         } else {
             const changes = skillEditorChanges.value.trim() || 'Updated via UI';
@@ -2607,7 +2646,7 @@ async function saveSkill() {
 }
 
 async function deleteSkill(name) {
-    if (!confirm(`Delete skill "${name}"? This cannot be undone.`)) return;
+    if (!confirm(`Delete custom tool "${name}"? This cannot be undone.`)) return;
     try {
         const response = await apiFetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
         if (!response.ok) {

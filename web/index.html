@@ -36,7 +36,7 @@
             <button class="rail-btn" data-panel="schedules" title="Schedules" aria-label="Schedules">
                 <i class="fas fa-clock"></i>
             </button>
-            <button class="rail-btn" data-panel="skills" title="Skills Library" aria-label="Skills Library">
+            <button class="rail-btn" data-panel="skills" title="Custom Tools & Skills" aria-label="Custom Tools & Skills">
                 <i class="fas fa-puzzle-piece"></i>
             </button>
             <div class="rail-spacer"></div>
@@ -130,7 +130,7 @@
                         <i class="fas fa-clock"></i> Schedules
                     </button>
                     <button class="workspace-tab" data-tab="skills">
-                        <i class="fas fa-puzzle-piece"></i> Skills
+                        <i class="fas fa-puzzle-piece"></i> Custom Tools & Skills
                     </button>
                 </div>
                 <button class="icon-action-btn" id="close-workspace-btn" title="Close" aria-label="Close">
@@ -151,7 +151,7 @@
                 <div id="skills-tab" class="tab-content">
                     <div class="skills-header">
                         <button id="refresh-skills" class="btn btn-secondary">Refresh</button>
-                        <button id="create-skill-btn" class="btn btn-primary"><i class="fas fa-plus"></i> New Skill</button>
+                        <button id="create-skill-btn" class="btn btn-primary"><i class="fas fa-plus"></i> New Custom Tool</button>
                     </div>
                     <div id="skills-library-list"></div>
                 </div>
@@ -234,7 +234,7 @@
             <div class="workspace-modal-header">
                 <div class="workspace-tabs">
                     <span class="knowledge-modal-title">
-                        <i class="fas fa-puzzle-piece"></i> <span id="skill-editor-title">New Skill</span>
+                        <i class="fas fa-puzzle-piece"></i> <span id="skill-editor-title">New Custom Tool</span>
                     </span>
                 </div>
                 <button class="icon-action-btn" id="close-skill-editor-btn" title="Close" aria-label="Close">
@@ -242,6 +242,13 @@
                 </button>
             </div>
             <div class="workspace-modal-body">
+                <div class="form-group" id="skill-editor-type-group">
+                    <label class="form-label">Type</label>
+                    <div class="skill-type-toggle">
+                        <button class="btn skill-type-btn active" data-skill-type="executable"><i class="fas fa-code"></i> Custom Tool</button>
+                        <button class="btn skill-type-btn" data-skill-type="prompt"><i class="fas fa-book"></i> Skill</button>
+                    </div>
+                </div>
                 <div class="form-group">
                     <label class="form-label">Name (kebab-case)</label>
                     <input class="form-control" id="skill-editor-name" type="text" placeholder="e.g. analyze-logs">
@@ -254,14 +261,15 @@
                     <label class="form-label">Tags (comma-separated)</label>
                     <input class="form-control" id="skill-editor-tags" type="text" placeholder="e.g. analysis, code, devops">
                 </div>
-                <div class="form-group">
+                <div class="form-group" id="skill-editor-parameters-group">
                     <label class="form-label">Parameters</label>
                     <textarea class="form-control" id="skill-editor-parameters" rows="2" placeholder="One per line: name=description&#10;e.g. text=The text to analyze"></textarea>
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Code</label>
-                    <p class="skill-editor-hint">Python only. Define a <code>main(**kwargs)</code> function that returns a string result. Available modules: <code>json</code>, <code>math</code>, <code>re</code>, <code>datetime</code>, <code>time</code>, <code>random</code>, <code>string</code>, <code>itertools</code>, <code>collections</code>, <code>functools</code>, <code>textwrap</code>, <code>hashlib</code>, <code>base64</code>, <code>csv</code>, <code>io</code>, <code>statistics</code>, <code>urllib.parse</code>.</p>
-                    <details class="skill-example-section">
+                <div class="form-group" id="skill-editor-code-group">
+                    <label class="form-label" id="skill-editor-code-label">Code</label>
+                    <p class="skill-editor-hint" id="skill-editor-hint-executable">Custom tools are sandboxed Python. Define a <code>main(**kwargs)</code> function that returns a string result. Available modules: <code>json</code>, <code>math</code>, <code>re</code>, <code>datetime</code>, <code>time</code>, <code>random</code>, <code>string</code>, <code>itertools</code>, <code>collections</code>, <code>functools</code>, <code>textwrap</code>, <code>hashlib</code>, <code>base64</code>, <code>csv</code>, <code>io</code>, <code>statistics</code>, <code>urllib.parse</code>.</p>
+                    <p class="skill-editor-hint" id="skill-editor-hint-prompt" hidden>Write markdown content that provides domain expertise. This will be automatically injected into the agent's context. No code execution needed.</p>
+                    <details class="skill-example-section" id="skill-editor-example-executable">
                         <summary>Show example</summary>
                         <pre class="skill-example-code">def main(**kwargs):
     text = kwargs.get("text", "")
@@ -277,6 +285,19 @@
                             <strong>Tags:</strong> <code>text, analysis</code><br>
                             <strong>Parameters:</strong> <code>text=The text to analyze</code></p>
                     </details>
+                    <details class="skill-example-section" id="skill-editor-example-prompt" hidden>
+                        <summary>Show example</summary>
+                        <pre class="skill-example-code"># Python Best Practices
+
+## Code Style
+- Use type hints for all function signatures
+- Keep functions under 20 lines
+- Prefer list comprehensions over map/filter
+
+## Error Handling
+- Catch specific exceptions, never bare except
+- Use contextlib.suppress for expected errors</pre>
+                    </details>
                     <div id="skill-editor-code-wrapper"></div>
                 </div>
                 <div class="form-group" id="skill-editor-changes-group" hidden>
@@ -284,7 +305,7 @@
                     <input class="form-control" id="skill-editor-changes" type="text" placeholder="What changed in this version">
                 </div>
                 <div class="details-actions">
-                    <button class="btn btn-primary" id="skill-editor-save-btn">Create Skill</button>
+                    <button class="btn btn-primary" id="skill-editor-save-btn">Create Custom Tool</button>
                     <button class="btn btn-secondary" id="skill-editor-cancel-btn">Cancel</button>
                     <span class="form-status" id="skill-editor-status"></span>
                 </div>
@@ -299,6 +320,7 @@
     <!-- CodeMirror (skill editor) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/markdown/markdown.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/matchbrackets.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/closebrackets.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/comment/comment.min.js"></script>
