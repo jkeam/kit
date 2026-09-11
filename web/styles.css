@@ -849,10 +849,29 @@ button.chat-header-menu {
     margin-top: 4px;
 }
 
+.collapsible-toggle {
+    cursor: pointer;
+    user-select: none;
+}
+
+.collapsible-toggle:hover {
+    color: var(--text-primary);
+}
+
+.toggle-icon {
+    display: inline-block;
+    font-size: 10px;
+    transition: transform 0.15s ease;
+}
+
 .activity-mini-list {
     display: flex;
     flex-direction: column;
     gap: 6px;
+}
+
+.activity-mini-list.collapsed {
+    display: none;
 }
 
 .activity-mini-item {

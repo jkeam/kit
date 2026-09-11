@@ -1159,9 +1159,11 @@ async function renderMemberDetails(agentId) {
     `;
 
     html += `
-        <div class="details-section">
-            <div class="details-section-label">Recent activity</div>
-            <div id="details-activity-mini" class="activity-mini-list"><div class="spinner" style="margin:12px auto;"></div></div>
+        <div class="details-section" style="margin-top:24px;">
+            <div class="details-section-label collapsible-toggle" id="activity-toggle" role="button" tabindex="0" aria-expanded="false">
+                <span class="toggle-icon">&#9654;</span> Recent activity
+            </div>
+            <div id="details-activity-mini" class="activity-mini-list collapsed"><div class="spinner" style="margin:12px auto;"></div></div>
         </div>
     `;
 
@@ -1180,6 +1182,19 @@ async function renderMemberDetails(agentId) {
     }
 
     detailsBody.innerHTML = html;
+
+    const activityToggle = document.getElementById('activity-toggle');
+    const activityList = document.getElementById('details-activity-mini');
+    if (activityToggle && activityList) {
+        const toggle = () => {
+            const expanded = activityToggle.getAttribute('aria-expanded') === 'true';
+            activityToggle.setAttribute('aria-expanded', String(!expanded));
+            activityToggle.querySelector('.toggle-icon').innerHTML = expanded ? '&#9654;' : '&#9660;';
+            activityList.classList.toggle('collapsed', expanded);
+        };
+        activityToggle.addEventListener('click', toggle);
+        activityToggle.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    }
 
     if (!isKit) {
         document.getElementById('details-edit-btn').addEventListener('click', () => renderMemberEditForm(agentId));
