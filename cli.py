@@ -11,10 +11,12 @@ Usage:
 
 import os
 import sys
+import json
 import httpx
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.live import Live
 
 
 GATEWAY_URL = "http://localhost:18789"
@@ -81,30 +83,67 @@ def main():
         title="[bold cyan]You[/bold cyan]",
         border_style="cyan"
     ))
+    console.print()
 
-    # Send to gateway
-    console.print("\n[dim]Thinking...[/dim]\n")
-
+    # Stream from gateway
     try:
-        response = httpx.post(
-            f"{GATEWAY_URL}/chat",
-            json={
-                "platform": PLATFORM,
-                "user_id": USER_ID,
-                "message": user_message
-            },
-            headers=_AUTH_HEADERS,
-            timeout=30.0
-        )
-        response.raise_for_status()
-        data = response.json()
+        streaming_text = ""
+        message_count = 0
 
-        # Display response
-        console.print(Panel(
-            Markdown(data["response"]),
-            title=f"[bold green]Assistant[/bold green] [dim](msg #{data['message_count']})[/dim]",
-            border_style="green"
-        ))
+        with httpx.Client(timeout=None) as client:
+            with client.stream(
+                "POST",
+                f"{GATEWAY_URL}/chat/stream",
+                json={
+                    "platform": PLATFORM,
+                    "user_id": USER_ID,
+                    "message": user_message,
+                },
+                headers=_AUTH_HEADERS,
+            ) as response:
+                response.raise_for_status()
+
+                with Live(console=console, refresh_per_second=10) as live:
+                    for line in response.iter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        event = json.loads(line[6:])
+                        etype = event.get("type")
+
+                        if etype == "text_delta":
+                            streaming_text += event["content"]
+                            live.update(Panel(
+                                Markdown(streaming_text),
+                                title="[bold green]Assistant[/bold green]",
+                                border_style="green",
+                            ))
+
+                        elif etype == "tool_call_start":
+                            live.console.print(
+                                f"  [dim]▶ {event['tool_name']}[/dim]"
+                            )
+
+                        elif etype == "tool_call_result":
+                            live.console.print(
+                                f"  [dim]✓ {event['tool_name']}[/dim]"
+                            )
+
+                        elif etype == "stream_end":
+                            message_count = event.get("message_count", 0)
+
+                        elif etype == "stream_error":
+                            console.print(
+                                f"\n[red]Error:[/red] {event.get('error')}"
+                            )
+                            sys.exit(1)
+
+        # Final render with message count
+        if streaming_text:
+            console.print(Panel(
+                Markdown(streaming_text),
+                title=f"[bold green]Assistant[/bold green] [dim](msg #{message_count})[/dim]",
+                border_style="green",
+            ))
         console.print()
 
     except httpx.ConnectError:

@@ -13,7 +13,7 @@ load_dotenv()
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Header, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -305,6 +305,61 @@ async def chat(request: ChatRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing message: {str(e)}")
+
+
+@app.post("/chat/stream", dependencies=[Depends(_require_gateway_token)])
+async def chat_stream(request: ChatRequest):
+    """Stream assistant responses as Server-Sent Events."""
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+
+    session_id = make_session_id(request.platform, request.user_id, request.agent_id)
+    session_manager.save_message(session_id, "user", request.message)
+
+    await manager.broadcast({
+        "type": "user_message",
+        "session_id": session_id,
+        "platform": request.platform,
+        "agent_id": request.agent_id,
+        "message": request.message,
+        "timestamp": _now()
+    })
+
+    async def event_generator():
+        full_response = ""
+        try:
+            async for event in session_manager.send_message_stream(
+                platform=request.platform,
+                user_id=request.user_id,
+                message=request.message,
+                agent_id=request.agent_id,
+            ):
+                if event["type"] == "stream_end":
+                    full_response = event.get("content", "")
+                    session_manager.save_message(session_id, "assistant", full_response)
+                    stats = session_manager.get_session_stats(session_id)
+                    message_count = stats["message_count"] if stats else 0
+                    event = {**event, "message_count": message_count}
+                    yield f"data: {json.dumps(event)}\n\n"
+                    await manager.broadcast({
+                        "type": "assistant_message",
+                        "session_id": session_id,
+                        "platform": request.platform,
+                        "agent_id": request.agent_id,
+                        "message": full_response,
+                        "message_count": message_count,
+                        "timestamp": _now(),
+                    })
+                else:
+                    yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'stream_error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _broadcast_session_id(platform: str, user_id: str) -> str:
