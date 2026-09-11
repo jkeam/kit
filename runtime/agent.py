@@ -661,13 +661,18 @@ class PersonalAssistant:
             full_response = "".join(all_content_parts)
             visible_text = _THINK_TAG_RE.sub("", full_response).strip()
 
-            if not visible_text and len(messages) > 2:
+            if not visible_text:
+                used_tools = len(messages) > 2
                 messages.append({
                     "role": "user",
                     "content": (
                         "You used tools and got results but your response was empty. "
                         "Please provide a clear answer to the original question based "
                         "on the tool results you received."
+                    ) if used_tools else (
+                        "Your response was empty. Please provide a clear, "
+                        "visible answer to the user's question. Do not respond "
+                        "with only internal reasoning."
                     ),
                 })
                 self._trim_context(messages, self._filtered_tools, context_limit)
