@@ -1734,9 +1734,10 @@ defaultTeamBtn.addEventListener('click', async () => {
 });
 
 function updateDefaultTeamBtnVisibility() {
-    const defaultIds = ['researcher-1', 'dev-1', 'qa-1', 'sec-1'];
-    const allExist = defaultIds.every(id => agentsById[id]);
-    defaultTeamBtn.hidden = allExist;
+    const defaultTemplates = ['researcher', 'developer', 'tester', 'security'];
+    const usedTemplates = new Set(agentsCache.map(a => a.template_id).filter(Boolean));
+    const allCovered = defaultTemplates.every(t => usedTemplates.has(t));
+    defaultTeamBtn.hidden = allCovered;
     defaultTeamBtn.disabled = false;
     defaultTeamBtn.innerHTML = '<i class="fas fa-users"></i> Create default team';
 }

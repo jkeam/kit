@@ -623,12 +623,19 @@ DEFAULT_TEAM = [
 async def create_default_team():
     """Create the default team (researcher, developer, tester, security).
 
-    Skips any agent whose id already exists so it's safe to call
-    repeatedly."""
+    Skips a slot if an agent from that template already exists (by
+    template_id, not by id) so it's safe to call repeatedly and
+    respects agents the user already created from the same templates."""
     sm = _require_session_manager()
+    existing_templates = {
+        a.template_id for a in sm.agent_registry.list_agents() if a.template_id
+    }
     created = []
     skipped = []
     for spec in DEFAULT_TEAM:
+        if spec["template_id"] in existing_templates:
+            skipped.append(spec["template_id"])
+            continue
         if sm.agent_registry.resolve(spec["id"]) is not None:
             skipped.append(spec["id"])
             continue
@@ -639,6 +646,7 @@ async def create_default_team():
                 name=spec["name"],
             )
             created.append(AgentOut.from_definition(defn))
+            existing_templates.add(spec["template_id"])
         except ValueError:
             skipped.append(spec["id"])
     return {"created": created, "skipped": skipped}
