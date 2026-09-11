@@ -612,10 +612,10 @@ async def create_agent(request: CreateAgentRequest):
 
 
 DEFAULT_TEAM = [
-    {"template_id": "researcher", "id": "researcher-1", "name": "Researcher"},
-    {"template_id": "developer",  "id": "dev-1",        "name": "Developer"},
-    {"template_id": "tester",     "id": "qa-1",         "name": "Tester"},
-    {"template_id": "security",   "id": "sec-1",        "name": "Security"},
+    {"template_id": "researcher", "id": "researcher-1", "name": "Ronny"},
+    {"template_id": "developer",  "id": "dev-1",        "name": "David"},
+    {"template_id": "tester",     "id": "qa-1",         "name": "Tom"},
+    {"template_id": "security",   "id": "sec-1",        "name": "Sam"},
 ]
 
 
