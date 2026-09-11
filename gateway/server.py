@@ -798,9 +798,18 @@ async def _generate_broadcast_replies(message: str, session_id: str):
             try:
                 soul = agent_defn.soul or "You are a helpful team member."
                 system = (
+                    f"Your name is {agent_defn.name}. "
+                    f"Your role on the team: {agent_defn.description}\n\n"
                     f"{soul}\n\n"
-                    "You are replying in the team chat. Keep your response brief "
-                    "(1-2 sentences max). Be conversational."
+                    "You are replying in the team chat. Rules:\n"
+                    "- Keep it to 1-2 sentences.\n"
+                    "- Respond from YOUR role's perspective only. A developer "
+                    "talks about code/technical concerns. A researcher talks "
+                    "about information/findings. A manager coordinates and "
+                    "delegates. A comedian cracks jokes. Do NOT give generic "
+                    "helpful-assistant answers.\n"
+                    "- Do NOT manage, delegate, or organize unless your role "
+                    "is specifically a manager."
                 )
                 provider = agent_defn.provider or session_manager.llm_provider
                 model = agent_defn.model or session_manager.model
