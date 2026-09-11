@@ -1227,17 +1227,6 @@ async function renderMemberDetails(agentId) {
 
     html += `
         <div class="details-section">
-            <div class="details-section-label">Memory</div>
-            <div class="composer-row">
-                <input id="details-memory-search-input" type="text" placeholder="Search memories...">
-                <button id="details-memory-search-btn" class="btn btn-primary">Search</button>
-            </div>
-            <div id="details-memory-results"></div>
-        </div>
-    `;
-
-    html += `
-        <div class="details-section">
             <div class="details-section-label">Tools</div>
             <div id="details-tools-list" class="tools-list"><div class="spinner" style="margin:12px auto;"></div></div>
         </div>
@@ -1280,18 +1269,9 @@ async function renderMemberDetails(agentId) {
         </div>
     `;
 
-    html += `
-        <div class="details-section" style="margin-top:24px;">
-            <div class="details-section-label collapsible-toggle" id="activity-toggle" role="button" tabindex="0" aria-expanded="false">
-                <span class="toggle-icon">&#9654;</span> Recent activity
-            </div>
-            <div id="details-activity-mini" class="activity-mini-list collapsed"><div class="spinner" style="margin:12px auto;"></div></div>
-        </div>
-    `;
-
     if (isKit) {
         html += `
-            <div class="details-section">
+            <div class="details-section" style="margin-top:24px;">
                 <div class="details-section-label">Persona (SOUL.md)</div>
                 <p class="tab-hint">Defines Kit's personality and behavior. Changes take effect on the next message.</p>
                 <textarea class="form-control" id="kit-persona-editor" rows="12" placeholder="Loading..."></textarea>
@@ -1302,6 +1282,15 @@ async function renderMemberDetails(agentId) {
             </div>
         `;
     }
+
+    html += `
+        <div class="details-section" ${!isKit ? 'style="margin-top:24px;"' : ''}>
+            <div class="details-section-label collapsible-toggle" id="activity-toggle" role="button" tabindex="0" aria-expanded="false">
+                <span class="toggle-icon">&#9654;</span> Recent activity
+            </div>
+            <div id="details-activity-mini" class="activity-mini-list collapsed"><div class="spinner" style="margin:12px auto;"></div></div>
+        </div>
+    `;
 
     detailsBody.innerHTML = html;
 
@@ -1329,14 +1318,6 @@ async function renderMemberDetails(agentId) {
         savePersonaBtn.addEventListener('click', () => savePersonaFrom(personaEditor, personaStatus, savePersonaBtn));
     }
 
-    const detailsMemoryBtn = document.getElementById('details-memory-search-btn');
-    const detailsMemoryInput = document.getElementById('details-memory-search-input');
-    if (detailsMemoryBtn) detailsMemoryBtn.addEventListener('click', searchDetailsMemory);
-    if (detailsMemoryInput) {
-        detailsMemoryInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') { e.preventDefault(); searchDetailsMemory(); }
-        });
-    }
     const detailsKnowledgeBtn = document.getElementById('details-knowledge-btn');
     if (detailsKnowledgeBtn) {
         detailsKnowledgeBtn.addEventListener('click', () => {
@@ -2112,48 +2093,6 @@ async function loadActivity() {
 }
 
 refreshActivityBtn.addEventListener('click', loadActivity);
-
-async function searchDetailsMemory() {
-    const input = document.getElementById('details-memory-search-input');
-    const btn = document.getElementById('details-memory-search-btn');
-    const results = document.getElementById('details-memory-results');
-    if (!input || !btn || !results) return;
-
-    const query = input.value.trim();
-    if (!query) return;
-
-    btn.disabled = true;
-    btn.textContent = 'Searching...';
-    results.innerHTML = '<div class="spinner" style="margin:12px auto;"></div>';
-
-    try {
-        const response = await apiFetch(`${API_BASE}/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                platform: PLATFORM,
-                user_id: USER_ID,
-                agent_id: currentAgentId,
-                message: `Use memory_search to find: ${query}`
-            })
-        });
-
-        if (!response.ok) throw new Error('Search failed');
-        const data = await response.json();
-
-        results.innerHTML = `
-            <div class="memory-item">
-                <div class="memory-item-type">Search Results</div>
-                <div class="memory-item-content">${escapeHtml(data.response)}</div>
-            </div>
-        `;
-    } catch (error) {
-        results.innerHTML = `<div class="empty-state" style="padding:10px 0;">Error: ${escapeHtml(error.message)}</div>`;
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Search';
-    }
-}
 
 // Load schedules
 async function loadSchedules() {

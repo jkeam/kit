@@ -72,14 +72,54 @@ class SkillsManager:
         self.skills_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_file = self.skills_dir / "skills_metadata.json"
 
-        # Load metadata
+        # Load metadata and auto-discover unregistered skill files
         self.metadata = self._load_metadata()
+        self._discover_skills()
 
     def _load_metadata(self) -> Dict[str, Any]:
         """Load skills metadata."""
         if self.metadata_file.exists():
             return json.loads(self.metadata_file.read_text())
         return {}
+
+    def _discover_skills(self):
+        """Register any .py skill files on disk that are missing from metadata."""
+        changed = False
+        for path in self.skills_dir.glob("*.py"):
+            name = path.stem
+            if name in self.metadata:
+                continue
+            description = name.replace("-", " ").replace("_", " ")
+            version = 1
+            try:
+                text = path.read_text()
+                for line in text.splitlines():
+                    stripped = line.strip()
+                    if stripped.lower().startswith("description:"):
+                        description = stripped.split(":", 1)[1].strip()
+                    elif stripped.lower().startswith("version:"):
+                        try:
+                            version = int(stripped.split(":", 1)[1].strip().split()[0])
+                        except (ValueError, IndexError):
+                            pass
+            except OSError:
+                pass
+            self.metadata[name] = {
+                "name": name,
+                "description": description,
+                "created_at": datetime.now().isoformat(),
+                "version": version,
+                "success_rate": 0.0,
+                "usage_count": 0,
+                "success_count": 0,
+                "parameters": {},
+                "tags": [],
+                "last_used": None,
+                "last_improved": None,
+            }
+            changed = True
+        if changed:
+            self._save_metadata()
 
     def _save_metadata(self):
         """Save skills metadata."""
