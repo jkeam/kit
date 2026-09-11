@@ -660,7 +660,7 @@ DEFAULT_TEAM = [
     {"template_id": "researcher", "id": "researcher-1", "name": "Ronny"},
     {"template_id": "developer",  "id": "dev-1",        "name": "David"},
     {"template_id": "tester",     "id": "qa-1",         "name": "Tom"},
-    {"template_id": "security",   "id": "sec-1",        "name": "Sam"},
+    {"template_id": "security",   "id": "sec-1",        "name": "Sally"},
 ]
 
 

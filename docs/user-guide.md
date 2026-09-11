@@ -332,7 +332,7 @@ Or ask Kit in chat:
 
 ```
 Create a researcher agent named Ronny, a developer agent named David,
-a tester agent named Quinn, and a security agent named Sam.
+a tester agent named Quinn, and a security agent named Sally.
 ```
 
 ### Via the Web UI
@@ -497,7 +497,7 @@ Each step feeds into the next. Kit manages the handoffs automatically.
 **Security review after development:**
 ```
 Have David write a script that accepts user input and queries a
-SQLite database. When he's done, have Sam review David's code
+SQLite database. When he's done, have Sally review David's code
 for vulnerabilities.
 ```
 
@@ -516,12 +516,12 @@ You can mix both patterns in a single request:
 **Parallel research, then sequential build and test:**
 ```
 First, in parallel, have Ronny research Python logging best practices
-and have Sam audit what security concerns exist with our current
+and have Sally audit what security concerns exist with our current
 logging. Then have David implement a unified logging setup based on
 both findings. Finally, have Quinn test the new logging.
 ```
 
-This runs Ronny and Sam concurrently in the first step, feeds both results into David for the build step, and then hands off to Quinn for testing.
+This runs Ronny and Sally concurrently in the first step, feeds both results into David for the build step, and then hands off to Quinn for testing.
 
 **Parallel research, then implement:**
 ```
