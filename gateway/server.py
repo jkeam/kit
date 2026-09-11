@@ -32,6 +32,7 @@ import os
 from env_config import env_int
 from gateway.session_manager import SessionManager, make_session_id
 from gateway.scheduler import run_scheduler
+from gateway.dreamer import run_dream_cycle, list_dreams, get_dream
 from runtime.memory import MemoryManager
 from runtime.agent import OPENAI_COMPATIBLE_PROVIDERS
 
@@ -158,14 +159,17 @@ async def lifespan(app: FastAPI):
         on_event=manager.broadcast
     )
     scheduler_task = asyncio.create_task(run_scheduler(session_manager, manager))
+    dreamer_task = asyncio.create_task(run_dream_cycle(session_manager, manager))
     print("✅ Gateway server started")
     print(f"🤖 LLM: {model} at {base_url} (provider={provider})")
     print("⏰ Scheduler running (60s check interval)")
+    print("💤 Dream cycle running (cron: {})".format(os.environ.get("DREAM_CRON", "0 3 * * *")))
     print("📡 Ready to handle multi-platform requests")
 
     yield
 
     scheduler_task.cancel()
+    dreamer_task.cancel()
     print("🛑 Gateway server shutting down")
 
 
@@ -398,6 +402,23 @@ async def list_schedules():
         return []
     schedules = json.loads(SCHEDULES_PATH.read_text())
     return schedules
+
+
+@app.get("/dreams", dependencies=[Depends(_require_gateway_token)])
+async def list_dream_logs(agent_id: str = "kit"):
+    """List all dream logs for an agent, newest first."""
+    sm = _require_session_manager()
+    return list_dreams(sm.agent_registry.workspace_dir, agent_id)
+
+
+@app.get("/dreams/{date}", dependencies=[Depends(_require_gateway_token)])
+async def get_dream_log(date: str, agent_id: str = "kit"):
+    """Get a specific dream log by date (YYYY-MM-DD)."""
+    sm = _require_session_manager()
+    content = get_dream(sm.agent_registry.workspace_dir, agent_id, date)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"No dream log for {date}")
+    return {"date": date, "agent_id": agent_id, "content": content}
 
 
 SOUL_PATH = Path(__file__).parent.parent / "workspace" / "SOUL.md"
