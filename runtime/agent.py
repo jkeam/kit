@@ -619,24 +619,32 @@ class PersonalAssistant:
                         "tool_calls": assistant_tool_calls,
                     })
 
+                    parsed_calls = []
                     for tc_msg in assistant_tool_calls:
                         tool_name = tc_msg["function"]["name"]
                         try:
                             tool_args = json.loads(tc_msg["function"]["arguments"])
                         except json.JSONDecodeError:
                             tool_args = {}
+                        parsed_calls.append((tc_msg, tool_name, tool_args))
 
+                    for _, tool_name, tool_args in parsed_calls:
                         yield {"type": "tool_call_start", "tool_name": tool_name, "tool_args": tool_args}
 
+                    async def _run_tool(name: str, args: Dict[str, Any]) -> str:
                         try:
-                            result = self._cap_tool_result(
-                                str(await self._execute_tool_async(tool_name, tool_args))
+                            return self._cap_tool_result(
+                                str(await self._execute_tool_async(name, args))
                             )
                         except Exception as e:
-                            result = f"Error: {e}"
+                            return f"Error: {e}"
 
+                    results = await asyncio.gather(
+                        *(_run_tool(name, args) for _, name, args in parsed_calls)
+                    )
+
+                    for (tc_msg, tool_name, _), result in zip(parsed_calls, results):
                         yield {"type": "tool_call_result", "tool_name": tool_name, "result": result}
-
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc_msg["id"],
