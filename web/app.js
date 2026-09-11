@@ -22,6 +22,34 @@ const AVATAR_PALETTE = [
 let currentAgentId = KIT_AGENT_ID;
 let currentMode = 'dm'; // 'dm' | 'broadcast'
 
+// ---- URL state ----
+
+function pushChatUrl() {
+    const slug = currentMode === 'broadcast' ? 'team' : currentAgentId;
+    const path = `/chat/${encodeURIComponent(slug)}`;
+    if (window.location.pathname !== path) {
+        history.pushState({ agent: currentAgentId, mode: currentMode }, '', path);
+    }
+}
+
+function parseChatUrl() {
+    const match = window.location.pathname.match(/^\/chat\/(.+)$/);
+    if (!match) return null;
+    const slug = decodeURIComponent(match[1]);
+    if (slug === 'team') return { agent: KIT_AGENT_ID, mode: 'broadcast' };
+    return { agent: slug, mode: 'dm' };
+}
+
+window.addEventListener('popstate', async (e) => {
+    const state = e.state || parseChatUrl();
+    if (!state) return;
+    if (state.mode === 'broadcast') {
+        await selectBroadcastChannel(true);
+    } else {
+        await selectMember(state.agent, true);
+    }
+});
+
 function currentSessionId(agentId = currentAgentId) {
     if (currentMode === 'broadcast') return `broadcast:${PLATFORM}:${USER_ID}`;
     return agentId === KIT_AGENT_ID ? `${PLATFORM}:${USER_ID}` : `${PLATFORM}:${USER_ID}:${agentId}`;
@@ -564,9 +592,10 @@ function updateChatHeaderForCurrentAgent() {
 
 // Switch who the chat panel is talking to (Kit or a specific agent) - moves
 // to that agent's own persistent thread rather than continuing this one.
-async function selectMember(agentId) {
+async function selectMember(agentId, skipPush = false) {
     currentMode = 'dm';
     currentAgentId = agentId;
+    if (!skipPush) pushChatUrl();
     resetStreamingState();
     removeThinkingIndicator();
     updateChatHeaderForCurrentAgent();
@@ -580,8 +609,9 @@ async function selectMember(agentId) {
     }
 }
 
-async function selectBroadcastChannel() {
+async function selectBroadcastChannel(skipPush = false) {
     currentMode = 'broadcast';
+    if (!skipPush) pushChatUrl();
     resetStreamingState();
     removeThinkingIndicator();
     refreshMemberListVisualState();
@@ -1146,7 +1176,7 @@ function readMcpEditor(containerId) {
     const container = document.getElementById(containerId);
     if (!container) return null;
     const entries = container.querySelectorAll('.mcp-entry');
-    if (entries.length === 0) return null;
+    if (entries.length === 0) return {};
     const servers = {};
     for (const entry of entries) {
         const name = entry.querySelector('.mcp-name').value.trim();
@@ -1166,7 +1196,7 @@ function readMcpEditor(containerId) {
         }
         servers[name] = config;
     }
-    return Object.keys(servers).length > 0 ? servers : null;
+    return servers;
 }
 
 function renderMcpReadonly(containerId, servers) {
@@ -1508,7 +1538,7 @@ async function createTemplate() {
         skills: readCheckboxGroup('tpl-skills-cb'),
         soul: document.getElementById('tpl-soul').value,
     };
-    if (mcpServers) template.mcp_servers = mcpServers;
+    template.mcp_servers = mcpServers;
 
     btn.disabled = true;
     statusEl.textContent = 'Creating...';
@@ -1617,7 +1647,7 @@ async function saveTemplate(templateId) {
         skills: readCheckboxGroup('tpl-skills-cb'),
         soul: document.getElementById('tpl-soul').value,
     };
-    if (mcpServers) template.mcp_servers = mcpServers;
+    template.mcp_servers = mcpServers;
 
     btn.disabled = true;
     statusEl.textContent = 'Saving...';
@@ -2259,6 +2289,12 @@ function handleWebSocketMessage(data) {
             }
             break;
 
+        case 'mcp_notice':
+            if (isOwnSession) {
+                addMessage(data.content, 'system');
+            }
+            break;
+
         case 'stream_end':
             if (isOwnSession) {
                 if (streamingMessageDiv) {
@@ -2383,7 +2419,21 @@ async function init() {
 
     if (connected) {
         await loadAgents();
-        await loadChatHistory();
+
+        const urlState = parseChatUrl();
+        if (urlState) {
+            if (urlState.mode === 'broadcast') {
+                await selectBroadcastChannel(true);
+            } else if (urlState.agent !== KIT_AGENT_ID) {
+                await selectMember(urlState.agent, true);
+            } else {
+                await loadChatHistory();
+            }
+        } else {
+            await loadChatHistory();
+        }
+        history.replaceState({ agent: currentAgentId, mode: currentMode }, '', `/chat/${encodeURIComponent(currentMode === 'broadcast' ? 'team' : currentAgentId)}`);
+
         addMessage('Connected to Kit', 'system');
         connectWebSocket();
     } else {

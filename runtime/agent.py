@@ -232,13 +232,35 @@ class PersonalAssistant:
             return file_path.read_text()
         return ""
 
-    async def _ensure_mcp_connected(self) -> None:
-        """Start MCP servers (if configured) on first use and merge their
-        tools into the list sent to the LLM."""
-        if self.mcp is None or self.mcp.connected:
-            return
-        await self.mcp.connect()
-        self._filtered_tools = self._filtered_tools + self.mcp.get_openai_tools()
+    async def _ensure_mcp_connected(self) -> List[str]:
+        """Start MCP servers (if configured) on first use, retry any that
+        previously failed, and merge their tools into the list sent to the LLM.
+        Returns a list of human-readable status messages for surfacing."""
+        if self.mcp is None:
+            return []
+
+        notices: List[str] = []
+
+        if not self.mcp.connected:
+            failures = await self.mcp.connect()
+            mcp_tools = self.mcp.get_openai_tools()
+            if mcp_tools:
+                self._filtered_tools = self._filtered_tools + mcp_tools
+            for name, err in failures.items():
+                notices.append(f"MCP server '{name}' failed to connect: {err}")
+        elif self.mcp._failed:
+            recovered, still_failed = await self.mcp.retry_failed()
+            if recovered:
+                new_tools = self.mcp.get_openai_tools()
+                self._filtered_tools = [
+                    t for t in self._filtered_tools
+                    if not t["function"]["name"].startswith("mcp__")
+                ] + new_tools
+                notices.append(f"MCP server(s) reconnected: {', '.join(recovered)}")
+            for name, err in still_failed.items():
+                notices.append(f"MCP server '{name}' still failing: {err}")
+
+        return notices
 
     def _team_roster_section(self) -> str:
         """List of teammates this agent can hand tasks to via agent_delegate,
@@ -505,7 +527,7 @@ class PersonalAssistant:
         """
         self._current_delegation_depth = _delegation_depth
         try:
-            await self._ensure_mcp_connected()
+            mcp_notices = await self._ensure_mcp_connected()
             context_limit = await self._resolve_context_limit()
             system_prompt = self._build_system_prompt()
             messages = [
@@ -514,6 +536,9 @@ class PersonalAssistant:
             ]
 
             yield {"type": "stream_start"}
+
+            for notice in mcp_notices:
+                yield {"type": "mcp_notice", "content": notice}
 
             all_content_parts: list[str] = []
 

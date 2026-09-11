@@ -201,6 +201,17 @@ async def root():
     return RedirectResponse(url="/static/index.html")
 
 
+@app.get("/chat/{agent_id:path}")
+async def chat_spa_fallback(agent_id: str):
+    """SPA fallback - serve index.html for /chat/* URLs so pushState routes
+    work on page reload and direct navigation."""
+    from fastapi.responses import FileResponse
+    index = Path(__file__).parent.parent / "web" / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
+    raise HTTPException(status_code=404, detail="Web UI not found")
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""

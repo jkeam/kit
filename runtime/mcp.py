@@ -70,21 +70,48 @@ class MCPManager:
         self._connections: Dict[str, _MCPConnection] = {}
         self._exit_stack: Optional[AsyncExitStack] = None
         self._connected = False
+        self._failed: Dict[str, str] = {}
 
-    async def connect(self) -> None:
+    async def connect(self) -> Dict[str, str]:
+        """Connect to all configured servers. Returns {name: error} for failures."""
         if self._connected:
-            return
+            return {}
 
         self._exit_stack = AsyncExitStack()
         await self._exit_stack.__aenter__()
 
+        failures: Dict[str, str] = {}
         for name, config in self.server_configs.items():
             try:
                 await self._connect_server(name, config)
             except Exception as e:
+                failures[name] = str(e)
                 print(f"Warning: MCP server '{name}' failed to connect: {e}")
 
+        self._failed = failures
         self._connected = True
+        return failures
+
+    async def retry_failed(self) -> Tuple[List[str], Dict[str, str]]:
+        """Retry previously failed servers. Returns (newly_connected, still_failed)."""
+        if not self._failed:
+            return [], {}
+
+        newly_connected = []
+        still_failed: Dict[str, str] = {}
+        for name in list(self._failed.keys()):
+            config = self.server_configs.get(name)
+            if not config:
+                continue
+            try:
+                await self._connect_server(name, config)
+                newly_connected.append(name)
+            except Exception as e:
+                still_failed[name] = str(e)
+                print(f"Warning: MCP server '{name}' retry failed: {e}")
+
+        self._failed = still_failed
+        return newly_connected, still_failed
 
     async def _connect_server(self, name: str, config: dict) -> None:
         if "command" not in config:
