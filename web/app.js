@@ -379,6 +379,10 @@ function addMessage(content, role = 'user', id = null, sender = null, agentId = 
     messageDiv.className = `message ${role}${sender ? ' delegated' : ''}`;
     if (id) messageDiv.id = id;
 
+    if (!messageDiv.dataset.messageId) {
+        messageDiv.dataset.messageId = crypto.randomUUID();
+    }
+
     if (role === 'system') {
         messageDiv.textContent = content;
         chatMessages.appendChild(messageDiv);
@@ -434,6 +438,21 @@ function addMessage(content, role = 'user', id = null, sender = null, agentId = 
     body.appendChild(headerLine);
     body.appendChild(contentDiv);
 
+    const reactionsDiv = document.createElement('div');
+    reactionsDiv.className = 'message-reactions';
+
+    const addReactionBtn = document.createElement('button');
+    addReactionBtn.className = 'add-reaction-btn';
+    addReactionBtn.textContent = '😀';
+    addReactionBtn.title = 'Add reaction';
+    addReactionBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showEmojiPicker(messageDiv, addReactionBtn);
+    });
+    reactionsDiv.appendChild(addReactionBtn);
+
+    body.appendChild(reactionsDiv);
+
     messageDiv.appendChild(avatar);
     messageDiv.appendChild(body);
 
@@ -441,6 +460,107 @@ function addMessage(content, role = 'user', id = null, sender = null, agentId = 
     scrollChatToBottom();
 
     return messageDiv;
+}
+
+const EMOJI_PALETTE = [
+    '👍', '👎', '❤️', '😂', '🎉', '🤔',
+    '👀', '🙌', '🔥', '💯', '✅', '❌',
+    '👏', '😍', '🚀', '💡', '⭐', '🙏',
+];
+
+let activeEmojiPicker = null;
+
+function showEmojiPicker(messageDiv, anchorBtn) {
+    if (activeEmojiPicker) {
+        activeEmojiPicker.remove();
+        if (activeEmojiPicker.dataset.forMessage === messageDiv.dataset.messageId) {
+            activeEmojiPicker = null;
+            return;
+        }
+        activeEmojiPicker = null;
+    }
+
+    const picker = document.createElement('div');
+    picker.className = 'emoji-picker';
+    picker.dataset.forMessage = messageDiv.dataset.messageId;
+
+    EMOJI_PALETTE.forEach(emoji => {
+        const btn = document.createElement('button');
+        btn.className = 'emoji-picker-item';
+        btn.textContent = emoji;
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleReaction(messageDiv, emoji);
+            picker.remove();
+            activeEmojiPicker = null;
+        });
+        picker.appendChild(btn);
+    });
+
+    anchorBtn.parentElement.appendChild(picker);
+    activeEmojiPicker = picker;
+}
+
+document.addEventListener('click', () => {
+    if (activeEmojiPicker) {
+        activeEmojiPicker.remove();
+        activeEmojiPicker = null;
+    }
+});
+
+function toggleReaction(messageDiv, emoji) {
+    const messageId = messageDiv.dataset.messageId;
+    if (!messageId) return;
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'add_reaction',
+            message_id: messageId,
+            session_id: currentSessionId(),
+            emoji: emoji,
+            user_id: USER_ID,
+        }));
+    }
+
+    applyReactionToMessage(messageDiv, emoji, USER_ID);
+}
+
+function applyReactionToMessage(messageDiv, emoji, userId) {
+    const reactionsDiv = messageDiv.querySelector('.message-reactions');
+    if (!reactionsDiv) return;
+
+    let chip = reactionsDiv.querySelector(`.reaction-chip[data-emoji="${CSS.escape(emoji)}"]`);
+
+    if (chip) {
+        const users = JSON.parse(chip.dataset.users || '[]');
+        const idx = users.indexOf(userId);
+        if (idx !== -1) {
+            users.splice(idx, 1);
+            if (users.length === 0) {
+                chip.remove();
+                return;
+            }
+        } else {
+            users.push(userId);
+        }
+        chip.dataset.users = JSON.stringify(users);
+        chip.querySelector('.reaction-count').textContent = users.length > 1 ? users.length : '';
+        chip.classList.toggle('reaction-mine', users.includes(USER_ID));
+    } else {
+        chip = document.createElement('span');
+        chip.className = 'reaction-chip user-reaction';
+        chip.dataset.emoji = emoji;
+        chip.dataset.users = JSON.stringify([userId]);
+        chip.classList.add('reaction-mine');
+        chip.innerHTML = `<span class="reaction-emoji">${emoji}</span><span class="reaction-count"></span>`;
+        chip.style.animation = 'reaction-pop 0.35s ease-out forwards';
+        chip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleReaction(messageDiv, emoji);
+        });
+        const addBtn = reactionsDiv.querySelector('.add-reaction-btn');
+        reactionsDiv.insertBefore(chip, addBtn);
+    }
 }
 
 // Add thinking indicator
@@ -478,6 +598,7 @@ async function sendMessage() {
     sendButton.disabled = true;
 
     const msgDiv = addMessage(message, 'user');
+    const userMessageId = msgDiv.dataset.messageId;
     chatInput.value = '';
     chatInput.style.height = 'auto';
 
@@ -521,6 +642,7 @@ async function sendMessage() {
             user_id: USER_ID,
             agent_id: currentAgentId,
             message: message,
+            message_id: userMessageId,
         }));
         // Response handled by handleWebSocketMessage — input re-enabled on stream_end/stream_error
     } else {
@@ -2678,6 +2800,7 @@ function handleWebSocketMessage(data) {
 
                 streamingMessageDiv = document.createElement('div');
                 streamingMessageDiv.className = 'message assistant streaming';
+                streamingMessageDiv.dataset.messageId = crypto.randomUUID();
 
                 const avatarDiv = document.createElement('div');
                 avatarDiv.className = 'avatar';
@@ -2763,6 +2886,21 @@ function handleWebSocketMessage(data) {
             if (isOwnSession) {
                 if (streamingMessageDiv) {
                     streamingMessageDiv.classList.remove('streaming');
+                    const body = streamingMessageDiv.querySelector('.message-body');
+                    if (body && !body.querySelector('.message-reactions')) {
+                        const reactionsDiv = document.createElement('div');
+                        reactionsDiv.className = 'message-reactions';
+                        const addReactionBtn = document.createElement('button');
+                        addReactionBtn.className = 'add-reaction-btn';
+                        addReactionBtn.textContent = '😀';
+                        addReactionBtn.title = 'Add reaction';
+                        addReactionBtn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            showEmojiPicker(streamingMessageDiv, addReactionBtn);
+                        });
+                        reactionsDiv.appendChild(addReactionBtn);
+                        body.appendChild(reactionsDiv);
+                    }
                 }
                 if (data.message_count) {
                     messageCount = data.message_count;
@@ -2818,6 +2956,15 @@ function handleWebSocketMessage(data) {
             }
             break;
 
+        case 'message_reaction':
+            if (data.message_id && data.emoji) {
+                const target = document.querySelector(`[data-message-id="${CSS.escape(data.message_id)}"]`);
+                if (target && data.user_id !== USER_ID) {
+                    applyReactionToMessage(target, data.emoji, data.user_id);
+                }
+            }
+            break;
+
         case 'pong':
             console.log('Pong received');
             break;
@@ -2842,12 +2989,17 @@ async function loadChatHistory() {
         const response = await apiFetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/messages`);
         if (!response.ok) return;
         const messages = await response.json();
+        const reactionEntries = [];
         for (const msg of messages) {
             if (msg.role === 'reactions') {
                 if (msg.message_id && msg.reactions) {
                     const target = chatMessages.querySelector(`[data-message-id="${CSS.escape(msg.message_id)}"]`);
                     if (target) renderReactions(target, msg.reactions);
                 }
+                continue;
+            }
+            if (msg.role === 'user_reactions') {
+                reactionEntries.push(msg);
                 continue;
             }
             const div = addMessage(msg.content, msg.role, null, msg.sender || null, msg.agent_id || null);
@@ -2857,7 +3009,13 @@ async function loadChatHistory() {
                 timeDiv.textContent = new Date(msg.timestamp).toLocaleTimeString();
             }
         }
-        messageCount = messages.filter(m => m.role !== 'reactions').length;
+        for (const entry of reactionEntries) {
+            const target = chatMessages.querySelector(`[data-message-id="${CSS.escape(entry.message_id)}"]`);
+            if (target && entry.emoji && entry.user_id) {
+                applyReactionToMessage(target, entry.emoji, entry.user_id);
+            }
+        }
+        messageCount = messages.filter(m => m.role !== 'reactions' && m.role !== 'user_reactions').length;
         messageCountSpan.textContent = `${messageCount} messages`;
     } catch (error) {
         console.error('Failed to load chat history:', error);

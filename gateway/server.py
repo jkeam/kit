@@ -1120,9 +1120,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     user_id = message.get("user_id", "anonymous")
                     agent_id = message.get("agent_id", "kit")
                     user_msg = message.get("message", "")
+                    user_msg_id = message.get("message_id", str(uuid.uuid4()))
                     session_id = make_session_id(platform, user_id, agent_id)
 
-                    session_manager.save_message(session_id, "user", user_msg)
+                    session_manager.save_message(session_id, "user", user_msg, message_id=user_msg_id)
 
                     await manager.broadcast({
                         "type": "user_message",
@@ -1130,6 +1131,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "platform": platform,
                         "agent_id": agent_id,
                         "message": user_msg,
+                        "message_id": user_msg_id,
                         "timestamp": _now(),
                     })
 
@@ -1145,7 +1147,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                             if event["type"] == "stream_end":
                                 assistant_content = event.get("content", "")
-                                session_manager.save_message(session_id, "assistant", assistant_content)
+                                assistant_msg_id = str(uuid.uuid4())
+                                session_manager.save_message(session_id, "assistant", assistant_content, message_id=assistant_msg_id)
                                 stats = session_manager.get_session_stats(session_id)
                                 await manager.broadcast({
                                     "type": "assistant_message",
@@ -1161,6 +1164,25 @@ async def websocket_endpoint(websocket: WebSocket):
                             "type": "stream_error",
                             "session_id": session_id,
                             "error": str(e),
+                            "timestamp": _now(),
+                        })
+
+                elif msg_type == "add_reaction":
+                    msg_id = message.get("message_id", "")
+                    session_id = message.get("session_id", "")
+                    emoji = message.get("emoji", "")
+                    user_id = message.get("user_id", "anonymous")
+                    if msg_id and emoji and session_id:
+                        session_manager.save_message(
+                            session_id, "user_reactions", "",
+                            message_id=msg_id, emoji=emoji, user_id=user_id,
+                        )
+                        await manager.broadcast({
+                            "type": "message_reaction",
+                            "message_id": msg_id,
+                            "session_id": session_id,
+                            "emoji": emoji,
+                            "user_id": user_id,
                             "timestamp": _now(),
                         })
 

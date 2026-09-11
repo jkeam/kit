@@ -379,10 +379,13 @@ class SessionManager:
         stats = (self.get_session_stats(sid) for sid in ids)
         return [s for s in stats if s is not None]
 
+    _META_ROLES = {"reactions", "user_reactions"}
+
     def get_session_stats(self, session_id: str) -> Optional[Dict]:
         """Get statistics for a specific session - live (in-memory) or
         persisted-only (history on disk from before the last restart)."""
         messages = self.get_messages(session_id)
+        chat_count = sum(1 for m in messages if m.get("role") not in self._META_ROLES)
 
         if session_id in self.sessions:
             session = self.sessions[session_id]
@@ -393,7 +396,7 @@ class SessionManager:
                 "agent_id": session.agent_id,
                 "created_at": session.created_at.isoformat(),
                 "last_active": session.last_active.isoformat(),
-                "message_count": len(messages)
+                "message_count": chat_count
             }
 
         if not messages:
@@ -407,7 +410,7 @@ class SessionManager:
             "agent_id": agent_id,
             "created_at": messages[0]["timestamp"],
             "last_active": messages[-1]["timestamp"],
-            "message_count": len(messages)
+            "message_count": chat_count
         }
 
     def clear_session(self, session_id: str) -> bool:

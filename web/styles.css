@@ -630,6 +630,114 @@ button.chat-header-menu {
     transform: translateX(-50%) scale(1);
 }
 
+/* User emoji reactions */
+.message-reactions {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+    min-height: 24px;
+}
+
+.message-reactions .reaction-chip.user-reaction {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 16px;
+    width: auto;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 14px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    opacity: 1;
+    user-select: none;
+}
+
+.message-reactions .reaction-chip.user-reaction:hover {
+    background: var(--border);
+    transform: none;
+}
+
+.message-reactions .reaction-chip.reaction-mine {
+    border-color: var(--accent);
+    background: rgba(0, 102, 204, 0.1);
+}
+
+.reaction-emoji {
+    font-size: 16px;
+    line-height: 1;
+}
+
+.reaction-count {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 0;
+}
+
+.add-reaction-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 14px;
+    border: 1px dashed var(--border);
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+    opacity: 0.5;
+    transition: opacity 0.15s ease, background 0.15s ease;
+    padding: 0;
+}
+
+.message:hover .add-reaction-btn {
+    display: inline-flex;
+}
+
+.add-reaction-btn:hover {
+    opacity: 1;
+    background: var(--panel-bg);
+}
+
+.emoji-picker {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 2px;
+    padding: 8px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    z-index: 100;
+}
+
+.emoji-picker-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 20px;
+    transition: background 0.1s ease, transform 0.1s ease;
+}
+
+.emoji-picker-item:hover {
+    background: var(--panel-bg);
+    transform: scale(1.2);
+}
+
 /* Streaming cursor */
 .message.streaming .message-content::after {
     content: '▌';
