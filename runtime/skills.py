@@ -80,9 +80,18 @@ class SkillsManager:
         self._discover_skills()
 
     def _load_metadata(self) -> Dict[str, Any]:
-        """Load skills metadata."""
+        """Load skills metadata, backfilling missing 'type' field."""
         if self.metadata_file.exists():
-            return json.loads(self.metadata_file.read_text())
+            data = json.loads(self.metadata_file.read_text())
+            changed = False
+            for meta in data.values():
+                if "type" not in meta:
+                    ext = ".md" if (self.skills_dir / f"{meta['name']}.md").exists() else ".py"
+                    meta["type"] = "prompt" if ext == ".md" else "executable"
+                    changed = True
+            if changed:
+                self.metadata_file.write_text(json.dumps(data, indent=2))
+            return data
         return {}
 
     @staticmethod
