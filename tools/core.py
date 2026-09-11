@@ -146,7 +146,7 @@ def _load_shell_safety_config() -> Dict[str, Any]:
     return (config.get("tools") or {}).get("safety") or {}
 
 
-def exec_shell(command: str) -> str:
+def exec_shell(command: str, cwd: str = "") -> str:
     """
     Execute a shell command.
 
@@ -200,7 +200,7 @@ def exec_shell(command: str) -> str:
             capture_output=True,
             text=True,
             timeout=SHELL_EXEC_TIMEOUT_SECONDS,
-            cwd=os.getcwd()
+            cwd=cwd or os.getcwd()
         )
 
         output = []

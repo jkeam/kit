@@ -433,6 +433,9 @@ class PersonalAssistant:
             info = self.skills.get_skill_info(tool_args["name"])
             return json.dumps(info, indent=2) if info else f"Skill '{tool_args['name']}' not found"
 
+        if tool_name == "exec_shell":
+            tool_args = {**tool_args, "cwd": str(self.workspace_dir.resolve())}
+
         if tool_name in ("memory_write", "memory_get"):
             tool_args = {**tool_args, "agent_id": self.agent_id or "kit"}
 
