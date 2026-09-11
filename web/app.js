@@ -777,6 +777,7 @@ async function loadAgents() {
         }
         renderMemberList();
         updateChatHeaderForCurrentAgent();
+        if (typeof updateDefaultTeamBtnVisibility === 'function') updateDefaultTeamBtnVisibility();
         if (!detailsPanelEl.hidden && detailsMode === 'member') {
             renderMemberDetails(detailsAgentId || currentAgentId);
         }
@@ -1703,6 +1704,42 @@ addTeammateBtn.addEventListener('click', () => {
     renderAddTeammateForm();
     closeMobileSidebar();
 });
+
+const defaultTeamBtn = document.getElementById('default-team-btn');
+defaultTeamBtn.addEventListener('click', async () => {
+    defaultTeamBtn.disabled = true;
+    const origText = defaultTeamBtn.innerHTML;
+    defaultTeamBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
+    try {
+        const response = await apiFetch(`${API_BASE}/agents/create-default-team`, {
+            method: 'POST',
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        const result = await response.json();
+        await loadAgents();
+        const count = result.created.length;
+        if (count > 0) {
+            defaultTeamBtn.innerHTML = `<i class="fas fa-check"></i> Created ${count} agent${count > 1 ? 's' : ''}`;
+        } else {
+            defaultTeamBtn.innerHTML = '<i class="fas fa-check"></i> Team already exists';
+        }
+        setTimeout(() => { updateDefaultTeamBtnVisibility(); }, 2000);
+    } catch (error) {
+        defaultTeamBtn.innerHTML = `<i class="fas fa-times"></i> ${error.message}`;
+        setTimeout(() => { defaultTeamBtn.innerHTML = origText; defaultTeamBtn.disabled = false; }, 3000);
+    }
+});
+
+function updateDefaultTeamBtnVisibility() {
+    const defaultIds = ['researcher-1', 'dev-1', 'qa-1', 'sec-1'];
+    const allExist = defaultIds.every(id => agentsById[id]);
+    defaultTeamBtn.hidden = allExist;
+    defaultTeamBtn.disabled = false;
+    defaultTeamBtn.innerHTML = '<i class="fas fa-users"></i> Create default team';
+}
 
 // --- Workspace overlay: Team Activity / Schedules ---
 // Workspace-wide sections that aren't tied to any one team member.

@@ -611,6 +611,39 @@ async def create_agent(request: CreateAgentRequest):
     return AgentOut.from_definition(defn)
 
 
+DEFAULT_TEAM = [
+    {"template_id": "researcher", "id": "researcher-1", "name": "Researcher"},
+    {"template_id": "developer",  "id": "dev-1",        "name": "Developer"},
+    {"template_id": "tester",     "id": "qa-1",         "name": "Tester"},
+    {"template_id": "security",   "id": "sec-1",        "name": "Security"},
+]
+
+
+@app.post("/agents/create-default-team", dependencies=[Depends(_require_gateway_token)])
+async def create_default_team():
+    """Create the default team (researcher, developer, tester, security).
+
+    Skips any agent whose id already exists so it's safe to call
+    repeatedly."""
+    sm = _require_session_manager()
+    created = []
+    skipped = []
+    for spec in DEFAULT_TEAM:
+        if sm.agent_registry.resolve(spec["id"]) is not None:
+            skipped.append(spec["id"])
+            continue
+        try:
+            defn = sm.agent_registry.create_agent(
+                template_id=spec["template_id"],
+                id=spec["id"],
+                name=spec["name"],
+            )
+            created.append(AgentOut.from_definition(defn))
+        except ValueError:
+            skipped.append(spec["id"])
+    return {"created": created, "skipped": skipped}
+
+
 @app.get("/agents/{agent_id}", response_model=AgentOut, dependencies=[Depends(_require_gateway_token)])
 async def get_agent(agent_id: str):
     sm = _require_session_manager()

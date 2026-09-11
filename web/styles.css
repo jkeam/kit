@@ -324,6 +324,15 @@ button, input, textarea {
     border-color: rgba(255, 255, 255, 0.5);
 }
 
+.default-team-btn {
+    margin-top: 0;
+}
+
+.default-team-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
 .sidebar-scrim {
     display: none;
 }

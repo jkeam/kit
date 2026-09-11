@@ -311,28 +311,21 @@ Create an agent from a template to add it to the team:
 
 ### Quick Start: Create the Full Default Team
 
-The fastest way to get started with multi-agent orchestration is to create one agent from each built-in template:
+The fastest way to get started is the **"Create default team"** button in the sidebar. It creates one agent from each built-in template (researcher, developer, tester, security) in a single click. The button hides itself once all four agents exist.
+
+You can do the same thing via the API:
 
 ```bash
-# Create a researcher
-curl -X POST http://localhost:18789/agents \
-  -H "Content-Type: application/json" \
-  -d '{"template_id": "researcher", "id": "researcher-1", "name": "Ronny"}'
+curl -X POST http://localhost:18789/agents/create-default-team
+```
 
-# Create a developer
-curl -X POST http://localhost:18789/agents \
-  -H "Content-Type: application/json" \
-  -d '{"template_id": "developer", "id": "dev-1", "name": "David"}'
+This is idempotent -- it skips any agent that already exists and creates the rest. The response tells you what was created and what was skipped:
 
-# Create a tester
-curl -X POST http://localhost:18789/agents \
-  -H "Content-Type: application/json" \
-  -d '{"template_id": "tester", "id": "qa-1", "name": "Quinn"}'
-
-# Create a security reviewer
-curl -X POST http://localhost:18789/agents \
-  -H "Content-Type: application/json" \
-  -d '{"template_id": "security", "id": "sec-1", "name": "Sam"}'
+```json
+{
+  "created": [{"id": "researcher-1", ...}, {"id": "dev-1", ...}],
+  "skipped": ["qa-1", "sec-1"]
+}
 ```
 
 Or ask Kit in chat:
@@ -344,7 +337,7 @@ a tester agent named Quinn, and a security agent named Sam.
 
 ### Via the Web UI
 
-Use the Agents panel to create a new agent from any available template.
+Use the **"Create default team"** button in the sidebar to create all four default agents at once, or use the **"Add teammate"** button to create agents one at a time from any available template.
 
 ### Via the API
 
@@ -659,6 +652,9 @@ curl -X PUT http://localhost:18789/agents/dev-2 \
 
 # Delete an agent
 curl -X DELETE http://localhost:18789/agents/dev-2
+
+# Create the default team (researcher, developer, tester, security)
+curl -X POST http://localhost:18789/agents/create-default-team
 
 # Agent status (online/idle)
 curl http://localhost:18789/agents/status
