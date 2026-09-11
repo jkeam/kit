@@ -1040,9 +1040,10 @@ async function renderCheckboxGroup(containerId, endpoint, selected) {
         html += '<div class="cb-items">';
         items.forEach(item => {
             const checked = isWildcard || (selectedSet && selectedSet.has(item.name));
+            const typeBadge = item.type ? `<span class="cb-type-badge cb-type-${item.type === 'prompt' ? 'skill' : 'tool'}">${item.type === 'prompt' ? 'skill' : 'custom tool'}</span>` : '';
             html += `<label class="cb-row" title="${escapeAttr(item.description || '')}">
                 <input type="checkbox" value="${escapeAttr(item.name)}" ${checked ? 'checked' : ''} ${isWildcard ? 'disabled' : ''}>
-                <span class="cb-name">${escapeHtml(item.name)}</span>
+                <span class="cb-name">${escapeHtml(item.name)}</span>${typeBadge}
             </label>`;
         });
         html += '</div>';
@@ -2030,12 +2031,14 @@ async function loadDetailsSkills(agentId) {
             container.innerHTML = '<div class="empty-state" style="padding:10px 0;">No custom tools or skills</div>';
             return;
         }
-        container.innerHTML = skills.map(skill => `
+        container.innerHTML = skills.map(skill => {
+            const typeBadge = skill.type === 'prompt' ? 'skill' : 'custom tool';
+            return `
             <div class="tool-entry">
-                <div class="tool-entry-name">${escapeHtml(skill.name)}</div>
+                <div class="tool-entry-name">${escapeHtml(skill.name)} <span class="cb-type-badge cb-type-${skill.type === 'prompt' ? 'skill' : 'tool'}">${typeBadge}</span></div>
                 <div class="tool-entry-desc">${escapeHtml(skill.description || '')}</div>
             </div>
-        `).join('');
+        `;}).join('');
     } catch (error) {
         container.innerHTML = `<div class="empty-state" style="padding:10px 0;">Error: ${escapeHtml(error.message)}</div>`;
     }
