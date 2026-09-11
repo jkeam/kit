@@ -15,7 +15,12 @@
     "skill_execute",
     "skill_improve",
     "skill_info",
+    "knowledge_teach",
+    "knowledge_ingest",
+    "knowledge_ingest_url",
     "knowledge_search",
+    "knowledge_list",
+    "knowledge_forget",
     "web_search",
     "web_fetch"
   ],

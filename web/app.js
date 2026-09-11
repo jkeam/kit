@@ -1440,7 +1440,7 @@ function renderCreateTemplateForm() {
     detailsBody.innerHTML = `
         <button class="details-back-link" id="template-back-btn"><i class="fas fa-arrow-left"></i> Back to Add teammate</button>
         <div class="form-group">
-            <label class="form-label">Id <span style="font-weight:normal;color:var(--pf-v5-global--Color--200)">(unique slug, cannot be changed later)</span></label>
+            <label class="form-label">Id <span style="font-weight:normal;color:var(--pf-v5-global--Color--200)">(must be unique, cannot be changed later)</span></label>
             <input class="form-control" id="tpl-id" type="text" placeholder="e.g. data-analyst">
         </div>
         <div class="form-group">
@@ -1477,7 +1477,7 @@ function renderCreateTemplateForm() {
     document.getElementById('template-back-btn').addEventListener('click', renderAddTeammateForm);
     document.getElementById('template-cancel-btn').addEventListener('click', renderAddTeammateForm);
     document.getElementById('save-template-btn').addEventListener('click', createTemplate);
-    renderCheckboxGroup('tpl-tools-cb', '/tools', ['read', 'list_files', 'exec_shell']);
+    renderCheckboxGroup('tpl-tools-cb', '/tools', ['read', 'list_files', 'exec_shell', 'memory_search', 'memory_write', 'memory_get', 'knowledge_teach', 'knowledge_ingest', 'knowledge_ingest_url', 'knowledge_search', 'knowledge_list', 'knowledge_forget']);
     renderCheckboxGroup('tpl-skills-cb', '/skills', '*');
     renderMcpEditor('tpl-mcp-servers', null);
 }
@@ -1583,6 +1583,7 @@ async function renderEditTemplateForm(templateId) {
         </div>
         <div class="details-actions">
             <button class="btn btn-primary" id="save-template-btn">Save template</button>
+            <button class="btn btn-danger" id="delete-template-btn">Delete template</button>
             <button class="btn btn-secondary" id="template-cancel-btn">Cancel</button>
             <span class="form-status" id="template-status"></span>
         </div>
@@ -1591,6 +1592,7 @@ async function renderEditTemplateForm(templateId) {
     document.getElementById('template-back-btn').addEventListener('click', renderAddTeammateForm);
     document.getElementById('template-cancel-btn').addEventListener('click', renderAddTeammateForm);
     document.getElementById('save-template-btn').addEventListener('click', () => saveTemplate(tpl.id));
+    document.getElementById('delete-template-btn').addEventListener('click', () => deleteTemplate(tpl.id));
     renderCheckboxGroup('tpl-tools-cb', '/tools', tpl.tools || []);
     renderCheckboxGroup('tpl-skills-cb', '/skills', tpl.skills || []);
     renderMcpEditor('tpl-mcp-servers', tpl.mcp_servers);
@@ -1638,6 +1640,26 @@ async function saveTemplate(templateId) {
         statusEl.className = 'form-status error';
     } finally {
         btn.disabled = false;
+    }
+}
+
+async function deleteTemplate(templateId) {
+    if (!confirm(`Delete template "${templateId}"? This cannot be undone.`)) return;
+    const statusEl = document.getElementById('template-status');
+    try {
+        const response = await apiFetch(`${API_BASE}/agent-templates/${encodeURIComponent(templateId)}`, {
+            method: 'DELETE',
+        });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        statusEl.textContent = 'Deleted';
+        statusEl.className = 'form-status success';
+        setTimeout(renderAddTeammateForm, 600);
+    } catch (error) {
+        statusEl.textContent = `Error: ${error.message}`;
+        statusEl.className = 'form-status error';
     }
 }
 

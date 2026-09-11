@@ -98,6 +98,17 @@ class AgentRegistry:
         path.write_text(json.dumps(template, indent=2))
         return template
 
+    def delete_template(self, template_id: str) -> bool:
+        """Delete a user-defined template. Cannot delete built-in templates."""
+        path = self.agent_templates_dir / f"{template_id}.json"
+        if not path.exists():
+            builtin_path = self.templates_dir / f"{template_id}.json"
+            if builtin_path.exists():
+                raise ValueError(f"Cannot delete built-in template '{template_id}'")
+            return False
+        path.unlink()
+        return True
+
     # ---- agent instances ----
 
     def _agent_meta_path(self, agent_id: str) -> Path:

@@ -576,6 +576,18 @@ async def save_agent_template(template: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.delete("/agent-templates/{template_id}", dependencies=[Depends(_require_gateway_token)])
+async def delete_agent_template(template_id: str):
+    sm = _require_session_manager()
+    try:
+        existed = sm.agent_registry.delete_template(template_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not existed:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    return {"message": f"Template '{template_id}' deleted"}
+
+
 # --- Per-agent knowledge routes ---
 
 from runtime.knowledge import KnowledgeManager
