@@ -6,6 +6,7 @@ This integrates with LlamaStack (soon OGX) which handles the ReAct loop.
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Set, AsyncGenerator
 from llama_stack_client import AsyncLlamaStackClient
@@ -20,6 +21,8 @@ from tools.core import TOOLS, execute_tool
 from env_config import env_int
 
 MAX_TOOL_ROUNDS = 10
+
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 # Rough chars-per-token ratio used for estimation (conservative — most
 # tokenizers average ~3.5–4 chars/token; using 3 overestimates and errs
@@ -656,6 +659,36 @@ class PersonalAssistant:
                 break
 
             full_response = "".join(all_content_parts)
+            visible_text = _THINK_TAG_RE.sub("", full_response).strip()
+
+            if not visible_text and len(messages) > 2:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "You used tools and got results but your response was empty. "
+                        "Please provide a clear answer to the original question based "
+                        "on the tool results you received."
+                    ),
+                })
+                self._trim_context(messages, self._filtered_tools, context_limit)
+                retry_stream = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    stream=True,
+                )
+                retry_parts: list[str] = []
+                async for chunk in retry_stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        retry_parts.append(delta.content)
+                        yield {"type": "text_delta", "content": delta.content}
+                retry_text = "".join(retry_parts)
+                retry_visible = _THINK_TAG_RE.sub("", retry_text).strip()
+                if retry_visible:
+                    full_response = retry_text
+
             self.memory.log_interaction(user_message, full_response, speaker=self._log_speaker())
             self._reindex_memory()
             yield {"type": "stream_end", "content": full_response}
