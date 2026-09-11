@@ -320,6 +320,14 @@ class PersonalAssistant:
 
         return "\n".join(parts)
 
+    def _reindex_memory(self) -> None:
+        """Re-index workspace memory files so semantic search stays current."""
+        if self.embeddings:
+            try:
+                self.embeddings.index_workspace()
+            except Exception:
+                pass
+
     def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
         """Execute a tool call and return the result as a string."""
         if self.allowed_tools is not None and tool_name not in self.allowed_tools:
@@ -391,13 +399,15 @@ class PersonalAssistant:
             params_str = tool_args.get("parameters")
             params = json.loads(params_str) if params_str else None
             tags = tool_args.get("tags", "").split(",") if tool_args.get("tags") else None
-            return self.skills.create_skill(
+            result = self.skills.create_skill(
                 name=tool_args["name"],
                 description=tool_args["description"],
                 code=tool_args["code"],
                 parameters=params,
                 tags=tags
             )
+            self._reindex_memory()
+            return result
         if tool_name == "skill_list":
             return self.skills.list_skills(tool_args.get("tag"), names=self.allowed_skills)
         if tool_name == "skill_execute":
@@ -405,13 +415,17 @@ class PersonalAssistant:
             kwargs = json.loads(args_str) if args_str else {}
             return self.skills.execute_skill(tool_args["name"], **kwargs)
         if tool_name == "skill_improve":
-            return self.skills.improve_skill(
+            result = self.skills.improve_skill(
                 name=tool_args["name"],
                 changes=tool_args["changes"],
                 code=tool_args.get("code")
             )
+            self._reindex_memory()
+            return result
         if tool_name == "skill_delete":
-            return self.skills.delete_skill(tool_args["name"])
+            result = self.skills.delete_skill(tool_args["name"])
+            self._reindex_memory()
+            return result
         if tool_name == "skill_info":
             info = self.skills.get_skill_info(tool_args["name"])
             return json.dumps(info, indent=2) if info else f"Skill '{tool_args['name']}' not found"
@@ -419,7 +433,12 @@ class PersonalAssistant:
         if tool_name in ("memory_write", "memory_get"):
             tool_args = {**tool_args, "agent_id": self.agent_id or "kit"}
 
-        return execute_tool(tool_name, tool_args)
+        result = execute_tool(tool_name, tool_args)
+
+        if tool_name == "memory_write":
+            self._reindex_memory()
+
+        return result
 
     async def _delegate(self, tool_args: Dict[str, Any]) -> str:
         """Hand a task to another agent on the team and return its reply.
@@ -630,11 +649,13 @@ class PersonalAssistant:
 
             full_response = "".join(all_content_parts)
             self.memory.log_interaction(user_message, full_response, speaker=self._log_speaker())
+            self._reindex_memory()
             yield {"type": "stream_end", "content": full_response}
 
         except Exception as e:
             error_msg = str(e)
             self.memory.log_interaction(user_message, f"ERROR: {error_msg}", speaker=self._log_speaker())
+            self._reindex_memory()
             yield {"type": "stream_error", "error": error_msg}
 
     def _log_speaker(self) -> str:
