@@ -26,6 +26,7 @@ import asyncio
 import secrets
 import re
 import uuid
+import random
 
 import os
 from env_config import env_int
@@ -329,6 +330,7 @@ async def broadcast_message(request: BroadcastRequest):
     })
 
     asyncio.create_task(_generate_broadcast_reactions(request.message, msg_id, session_id))
+    asyncio.create_task(_generate_broadcast_replies(request.message, session_id))
 
     return {"status": "ok", "session_id": session_id}
 
@@ -785,6 +787,75 @@ async def _generate_broadcast_reactions(message: str, message_id: str, session_i
         print(f"Warning: Failed to generate broadcast reactions: {e}")
 
 
+async def _generate_broadcast_replies(message: str, session_id: str):
+    """Have every agent reply to a broadcast message (no tools, just chat)."""
+    try:
+        agents = session_manager.agent_registry.list_agents()
+        if not agents:
+            return
+
+        async def _reply(agent_defn):
+            try:
+                soul = agent_defn.soul or "You are a helpful team member."
+                system = (
+                    f"{soul}\n\n"
+                    "You are replying in the team chat. Keep your response brief "
+                    "(1-2 sentences max). Be conversational."
+                )
+                provider = agent_defn.provider or session_manager.llm_provider
+                model = agent_defn.model or session_manager.model
+
+                if provider in OPENAI_COMPATIBLE_PROVIDERS:
+                    from openai import AsyncOpenAI
+                    client = AsyncOpenAI(
+                        base_url=session_manager.llm_base_url,
+                        api_key=session_manager.llm_api_key or "not-needed",
+                        default_headers=session_manager.llm_extra_headers,
+                    )
+                else:
+                    from llama_stack_client import AsyncLlamaStackClient
+                    client = AsyncLlamaStackClient(
+                        base_url=session_manager.llm_base_url,
+                        default_headers=session_manager.llm_extra_headers,
+                    )
+
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": message},
+                    ],
+                    stream=False,
+                )
+
+                text = response.choices[0].message.content.strip()
+                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                if not text:
+                    return
+
+                session_manager.save_message(
+                    session_id, "assistant", text, agent_id=agent_defn.id
+                )
+                await manager.broadcast({
+                    "type": "broadcast_reply",
+                    "session_id": session_id,
+                    "agent_id": agent_defn.id,
+                    "agent_name": agent_defn.name,
+                    "message": text,
+                    "timestamp": _now(),
+                })
+            except Exception as e:
+                print(f"Warning: Agent {agent_defn.id} failed to reply to broadcast: {e}")
+
+        order = list(agents)
+        random.shuffle(order)
+        for agent_defn in order:
+            await asyncio.sleep(random.uniform(1.0, 3.0))
+            await _reply(agent_defn)
+    except Exception as e:
+        print(f"Warning: Failed to generate broadcast replies: {e}")
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -903,6 +974,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
 
                     asyncio.create_task(_generate_broadcast_reactions(user_msg, msg_id, session_id))
+                    asyncio.create_task(_generate_broadcast_replies(user_msg, session_id))
 
             except json.JSONDecodeError:
                 await websocket.send_json({

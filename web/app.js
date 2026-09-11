@@ -374,7 +374,7 @@ function scrollChatToBottom() {
 // into the thread by another agent (delegation) rather than typed by the
 // human - rendered with a distinct label/border instead of implying the
 // human wrote it.
-function addMessage(content, role = 'user', id = null, sender = null) {
+function addMessage(content, role = 'user', id = null, sender = null, agentId = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${role}${sender ? ' delegated' : ''}`;
     if (id) messageDiv.id = id;
@@ -411,10 +411,11 @@ function addMessage(content, role = 'user', id = null, sender = null) {
         avatar.textContent = 'Y';
         authorSpan.textContent = 'You';
     } else {
-        const agent = agentsById[currentAgentId];
-        const name = agent ? agent.name : (currentAgentId === KIT_AGENT_ID ? 'Kit' : currentAgentId);
+        const effectiveId = agentId || currentAgentId;
+        const agent = agentsById[effectiveId];
+        const name = agent ? agent.name : (effectiveId === KIT_AGENT_ID ? 'Kit' : effectiveId);
         avatar.textContent = initialsFor(name);
-        avatar.style.background = avatarColorFor(currentAgentId);
+        avatar.style.background = avatarColorFor(effectiveId);
         authorSpan.textContent = name;
     }
 
@@ -2359,6 +2360,13 @@ function handleWebSocketMessage(data) {
             }
             break;
 
+        case 'broadcast_reply':
+            if (currentMode === 'broadcast') {
+                addMessage(data.message, 'assistant', null, null, data.agent_id);
+                scrollChatToBottom();
+            }
+            break;
+
         case 'broadcast_reactions':
             if (currentMode === 'broadcast' && data.message_id) {
                 const target = document.querySelector(`[data-message-id="${CSS.escape(data.message_id)}"]`);
@@ -2401,7 +2409,7 @@ async function loadChatHistory() {
                 }
                 continue;
             }
-            const div = addMessage(msg.content, msg.role, null, msg.sender || null);
+            const div = addMessage(msg.content, msg.role, null, msg.sender || null, msg.agent_id || null);
             if (msg.message_id) div.dataset.messageId = msg.message_id;
             const timeDiv = div.querySelector('.message-time');
             if (timeDiv && msg.timestamp) {
