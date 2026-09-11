@@ -1710,6 +1710,7 @@ addTeammateBtn.addEventListener('click', () => {
 const WORKSPACE_LOADERS = {
     activity: loadActivity,
     schedules: loadSchedules,
+    skills: loadSkillsLibrary,
 };
 
 function openWorkspacePanel(tabName) {
@@ -2131,6 +2132,305 @@ document.getElementById('knowledge-search-input')?.addEventListener('keydown', (
     if (e.key === 'Enter') searchKnowledge();
 });
 
+
+// --- Skills Library ---
+
+const skillsLibraryList = document.getElementById('skills-library-list');
+const refreshSkillsBtn = document.getElementById('refresh-skills');
+const createSkillBtn = document.getElementById('create-skill-btn');
+
+const skillEditorOverlay = document.getElementById('skill-editor-overlay');
+const skillEditorTitle = document.getElementById('skill-editor-title');
+const skillEditorName = document.getElementById('skill-editor-name');
+const skillEditorDescription = document.getElementById('skill-editor-description');
+const skillEditorTags = document.getElementById('skill-editor-tags');
+const skillEditorParameters = document.getElementById('skill-editor-parameters');
+const skillEditorCodeWrapper = document.getElementById('skill-editor-code-wrapper');
+const skillEditorChangesGroup = document.getElementById('skill-editor-changes-group');
+const skillEditorChanges = document.getElementById('skill-editor-changes');
+const skillEditorSaveBtn = document.getElementById('skill-editor-save-btn');
+const skillEditorCancelBtn = document.getElementById('skill-editor-cancel-btn');
+const skillEditorStatus = document.getElementById('skill-editor-status');
+const closeSkillEditorBtn = document.getElementById('close-skill-editor-btn');
+
+let skillEditorMode = 'create'; // 'create' | 'edit'
+let skillEditorOriginalName = null;
+let skillCodeMirror = null;
+
+function ensureCodeMirror() {
+    if (skillCodeMirror) return;
+    if (typeof CodeMirror === 'undefined' || !skillEditorCodeWrapper) return;
+    skillCodeMirror = CodeMirror(skillEditorCodeWrapper, {
+        mode: 'python',
+        theme: 'default',
+        lineNumbers: true,
+        matchBrackets: true,
+        autoCloseBrackets: true,
+        styleActiveLine: true,
+        indentUnit: 4,
+        tabSize: 4,
+        indentWithTabs: false,
+        lineWrapping: true,
+        viewportMargin: Infinity,
+        placeholder: 'import json, sys\nparams = json.loads(sys.stdin.read())\n# ... do work ...\nprint(json.dumps({\"result\": \"success\"}))',
+        extraKeys: {
+            'Cmd-/': 'toggleComment',
+            'Ctrl-/': 'toggleComment',
+            'Tab': (cm) => {
+                if (cm.somethingSelected()) {
+                    cm.indentSelection('add');
+                } else {
+                    cm.replaceSelection('    ', 'end');
+                }
+            },
+            'Shift-Tab': (cm) => cm.indentSelection('subtract'),
+        },
+    });
+}
+
+function getSkillCode() {
+    if (skillCodeMirror) return skillCodeMirror.getValue();
+    return '';
+}
+
+function setSkillCode(value) {
+    if (skillCodeMirror) {
+        skillCodeMirror.setValue(value);
+        setTimeout(() => skillCodeMirror.refresh(), 1);
+    }
+}
+
+function parseParametersField(text) {
+    if (!text.trim()) return {};
+    const params = {};
+    for (const line of text.split('\n')) {
+        const eq = line.indexOf('=');
+        if (eq > 0) params[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+    }
+    return params;
+}
+
+function formatParametersField(params) {
+    if (!params || typeof params !== 'object') return '';
+    return Object.entries(params).map(([k, v]) => `${k}=${v}`).join('\n');
+}
+
+function formatSuccessRate(rate) {
+    if (typeof rate !== 'number') return 'N/A';
+    return `${(rate * 100).toFixed(0)}%`;
+}
+
+async function loadSkillsLibrary() {
+    if (!skillsLibraryList) return;
+    refreshSkillsBtn.disabled = true;
+    skillsLibraryList.innerHTML = '<div class="spinner"></div>';
+    try {
+        const response = await apiFetch(`${API_BASE}/skills`);
+        if (!response.ok) throw new Error('Failed to load skills');
+        const skills = await response.json();
+        if (skills.length === 0) {
+            skillsLibraryList.innerHTML = '<p class="empty-state">No skills yet. Create one to get started.</p>';
+            return;
+        }
+        const sorted = skills.sort((a, b) => b.usage_count - a.usage_count);
+        skillsLibraryList.innerHTML = sorted.map(skill => {
+            const tags = (skill.tags || []).map(t => `<span class="skill-tag">${escapeHtml(t)}</span>`).join('');
+            return `
+                <div class="skill-card" data-skill-name="${escapeAttr(skill.name)}">
+                    <div class="skill-card-header">
+                        <span class="skill-card-name">${escapeHtml(skill.name)}</span>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span class="skill-card-version">v${skill.version}</span>
+                            <div class="skill-card-actions">
+                                <button class="btn btn-secondary skill-edit-btn" data-skill="${escapeAttr(skill.name)}" title="Edit">
+                                    <i class="fas fa-pen"></i>
+                                </button>
+                                <button class="btn btn-danger skill-delete-btn" data-skill="${escapeAttr(skill.name)}" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="skill-card-desc">${escapeHtml(skill.description || '')}</div>
+                    <div class="skill-card-meta">
+                        <span>Used ${skill.usage_count || 0} time${skill.usage_count === 1 ? '' : 's'}</span>
+                        <span>Success: ${formatSuccessRate(skill.success_rate)}</span>
+                        ${skill.last_used ? `<span>Last: ${new Date(skill.last_used).toLocaleDateString()}</span>` : ''}
+                    </div>
+                    ${tags ? `<div class="skill-card-tags" style="margin-top:6px;">${tags}</div>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        skillsLibraryList.querySelectorAll('.skill-edit-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openSkillEditor('edit', btn.dataset.skill);
+            });
+        });
+        skillsLibraryList.querySelectorAll('.skill-delete-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteSkill(btn.dataset.skill);
+            });
+        });
+        skillsLibraryList.querySelectorAll('.skill-card').forEach(card => {
+            card.addEventListener('click', () => openSkillEditor('edit', card.dataset.skillName));
+        });
+    } catch (error) {
+        skillsLibraryList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
+    } finally {
+        refreshSkillsBtn.disabled = false;
+    }
+}
+
+function openSkillEditor(mode, name) {
+    skillEditorMode = mode;
+    skillEditorOriginalName = name || null;
+    skillEditorStatus.textContent = '';
+
+    skillEditorOverlay.hidden = false;
+    ensureCodeMirror();
+
+    if (mode === 'create') {
+        skillEditorTitle.textContent = 'New Skill';
+        skillEditorName.value = '';
+        skillEditorName.disabled = false;
+        skillEditorDescription.value = '';
+        skillEditorTags.value = '';
+        skillEditorParameters.value = '';
+        setSkillCode('');
+        skillEditorChangesGroup.hidden = true;
+        skillEditorSaveBtn.textContent = 'Create Skill';
+    } else {
+        skillEditorTitle.textContent = 'Edit Skill';
+        skillEditorSaveBtn.textContent = 'Save Changes';
+        skillEditorChangesGroup.hidden = false;
+        skillEditorChanges.value = '';
+        skillEditorName.disabled = true;
+        loadSkillIntoEditor(name);
+    }
+
+    setTimeout(() => { if (skillCodeMirror) skillCodeMirror.refresh(); }, 50);
+}
+
+async function loadSkillIntoEditor(name) {
+    skillEditorName.value = name;
+    skillEditorDescription.value = '';
+    skillEditorTags.value = '';
+    skillEditorParameters.value = '';
+    setSkillCode('// Loading...');
+    skillEditorSaveBtn.disabled = true;
+
+    try {
+        const response = await apiFetch(`${API_BASE}/skills/${encodeURIComponent(name)}`);
+        if (!response.ok) throw new Error('Failed to load skill');
+        const skill = await response.json();
+        skillEditorDescription.value = skill.description || '';
+        skillEditorTags.value = (skill.tags || []).join(', ');
+        skillEditorParameters.value = formatParametersField(skill.parameters);
+        setSkillCode(skill.code || '');
+    } catch (error) {
+        skillEditorStatus.textContent = `Error: ${error.message}`;
+        skillEditorStatus.className = 'form-status error';
+    } finally {
+        skillEditorSaveBtn.disabled = false;
+    }
+}
+
+function closeSkillEditor() {
+    skillEditorOverlay.hidden = true;
+}
+
+async function saveSkill() {
+    const name = skillEditorName.value.trim();
+    const description = skillEditorDescription.value.trim();
+    const code = getSkillCode();
+    const tagsRaw = skillEditorTags.value.trim();
+    const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+    const parameters = parseParametersField(skillEditorParameters.value);
+
+    if (!name) {
+        skillEditorStatus.textContent = 'Name is required';
+        skillEditorStatus.className = 'form-status error';
+        return;
+    }
+    if (!description) {
+        skillEditorStatus.textContent = 'Description is required';
+        skillEditorStatus.className = 'form-status error';
+        return;
+    }
+    if (!code.trim()) {
+        skillEditorStatus.textContent = 'Code is required';
+        skillEditorStatus.className = 'form-status error';
+        return;
+    }
+
+    skillEditorSaveBtn.disabled = true;
+    skillEditorStatus.textContent = 'Saving...';
+    skillEditorStatus.className = 'form-status';
+
+    try {
+        let response;
+        if (skillEditorMode === 'create') {
+            response = await apiFetch(`${API_BASE}/skills`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, description, code, tags, parameters }),
+            });
+        } else {
+            const changes = skillEditorChanges.value.trim() || 'Updated via UI';
+            response = await apiFetch(`${API_BASE}/skills/${encodeURIComponent(skillEditorOriginalName)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description, code, tags, changes, parameters }),
+            });
+        }
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        skillEditorStatus.textContent = skillEditorMode === 'create' ? 'Created' : 'Saved';
+        skillEditorStatus.className = 'form-status success';
+        setTimeout(() => {
+            closeSkillEditor();
+            loadSkillsLibrary();
+        }, 600);
+    } catch (error) {
+        skillEditorStatus.textContent = `Error: ${error.message}`;
+        skillEditorStatus.className = 'form-status error';
+    } finally {
+        skillEditorSaveBtn.disabled = false;
+    }
+}
+
+async function deleteSkill(name) {
+    if (!confirm(`Delete skill "${name}"? This cannot be undone.`)) return;
+    try {
+        const response = await apiFetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${response.status}`);
+        }
+        await loadSkillsLibrary();
+    } catch (error) {
+        alert(`Failed to delete skill: ${error.message}`);
+    }
+}
+
+if (refreshSkillsBtn) refreshSkillsBtn.addEventListener('click', loadSkillsLibrary);
+if (createSkillBtn) createSkillBtn.addEventListener('click', () => openSkillEditor('create'));
+if (closeSkillEditorBtn) closeSkillEditorBtn.addEventListener('click', closeSkillEditor);
+if (skillEditorCancelBtn) skillEditorCancelBtn.addEventListener('click', closeSkillEditor);
+if (skillEditorSaveBtn) skillEditorSaveBtn.addEventListener('click', saveSkill);
+if (skillEditorOverlay) {
+    skillEditorOverlay.addEventListener('click', (e) => {
+        if (e.target === skillEditorOverlay) closeSkillEditor();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !skillEditorOverlay.hidden) closeSkillEditor();
+    });
+}
 
 // WebSocket connection
 function connectWebSocket() {

@@ -1686,3 +1686,188 @@ textarea.form-control {
     font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
     font-size: 12px;
 }
+
+/* ---------- Skills Library ---------- */
+
+.skills-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.skill-editor-hint {
+    font-size: 12.5px;
+    color: var(--text-tertiary);
+    line-height: 1.5;
+    margin: 0 0 6px;
+}
+
+.skill-editor-hint code {
+    font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-size: 11.5px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 4px;
+}
+
+.skill-example-section {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.skill-example-section summary {
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.skill-example-section[open] summary {
+    border-bottom: 1px solid var(--border);
+}
+
+.skill-example-code {
+    margin: 0;
+    padding: 12px 14px;
+    font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
+    background: #f6f8fa;
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.skill-example-note {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    padding: 8px 14px;
+    margin: 0;
+    border-top: 1px solid var(--border);
+    line-height: 1.5;
+}
+
+.skill-example-note code {
+    font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-size: 11.5px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 4px;
+}
+
+.skill-card {
+    padding: 14px;
+    margin-bottom: 10px;
+    background: var(--panel-bg);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.skill-card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.skill-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.skill-card-name {
+    font-weight: 700;
+    font-size: 14.5px;
+    font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+}
+
+.skill-card-version {
+    font-size: 11.5px;
+    color: var(--text-tertiary);
+    background: var(--main-bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+}
+
+.skill-card-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+
+.skill-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+
+.skill-card-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.skill-tag {
+    font-size: 11px;
+    color: var(--accent);
+    background: var(--accent-light);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-weight: 600;
+}
+
+.skill-card-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.skill-card-actions .btn {
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+#skill-editor-code-wrapper {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+#skill-editor-code-wrapper .CodeMirror {
+    height: 320px;
+    font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+#skill-editor-code-wrapper .CodeMirror-focused {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+#skill-editor-code-wrapper .CodeMirror-activeline-background {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+#skill-editor-code-wrapper .CodeMirror-gutters {
+    background: var(--panel-bg);
+    border-right: 1px solid var(--border);
+}
+
+#skill-editor-code-wrapper .CodeMirror-linenumber {
+    color: var(--text-tertiary);
+    font-size: 11.5px;
+}

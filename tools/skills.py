@@ -152,7 +152,7 @@ SKILLS_TOOLS = [
         "type": "function",
         "function": {
             "name": "skill_execute",
-            "description": "Execute a saved skill by name",
+            "description": "Execute a saved skill by name. Use skill_list first to discover the skill's parameters, then pass them as a JSON object string in args. For example, if a skill expects a 'text' parameter: args='{\"text\": \"hello\"}'",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -162,7 +162,7 @@ SKILLS_TOOLS = [
                     },
                     "args": {
                         "type": "string",
-                        "description": "JSON string of arguments to pass"
+                        "description": "JSON object string of keyword arguments to pass to the skill's main() function, e.g. '{\"text\": \"some input\"}'"
                     }
                 },
                 "required": ["name"]

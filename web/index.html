@@ -17,6 +17,10 @@
     <!-- Syntax highlighting theme -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 
+    <!-- CodeMirror (skill editor) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/hint/show-hint.min.css">
+
     <!-- Custom CSS -->
     <link rel="stylesheet" href="/static/styles.css">
 </head>
@@ -31,6 +35,9 @@
             </button>
             <button class="rail-btn" data-panel="schedules" title="Schedules" aria-label="Schedules">
                 <i class="fas fa-clock"></i>
+            </button>
+            <button class="rail-btn" data-panel="skills" title="Skills Library" aria-label="Skills Library">
+                <i class="fas fa-puzzle-piece"></i>
             </button>
             <div class="rail-spacer"></div>
 
@@ -119,6 +126,9 @@
                     <button class="workspace-tab" data-tab="schedules">
                         <i class="fas fa-clock"></i> Schedules
                     </button>
+                    <button class="workspace-tab" data-tab="skills">
+                        <i class="fas fa-puzzle-piece"></i> Skills
+                    </button>
                 </div>
                 <button class="icon-action-btn" id="close-workspace-btn" title="Close" aria-label="Close">
                     <i class="fas fa-xmark"></i>
@@ -133,6 +143,14 @@
                 <div id="schedules-tab" class="tab-content">
                     <button id="refresh-schedules" class="btn btn-secondary">Refresh</button>
                     <div id="schedules-list"></div>
+                </div>
+
+                <div id="skills-tab" class="tab-content">
+                    <div class="skills-header">
+                        <button id="refresh-skills" class="btn btn-secondary">Refresh</button>
+                        <button id="create-skill-btn" class="btn btn-primary"><i class="fas fa-plus"></i> New Skill</button>
+                    </div>
+                    <div id="skills-library-list"></div>
                 </div>
 
             </div>
@@ -207,9 +225,82 @@
         </div>
     </div>
 
+    <!-- Skill editor modal -->
+    <div class="workspace-overlay" id="skill-editor-overlay" hidden>
+        <div class="workspace-modal">
+            <div class="workspace-modal-header">
+                <div class="workspace-tabs">
+                    <span class="knowledge-modal-title">
+                        <i class="fas fa-puzzle-piece"></i> <span id="skill-editor-title">New Skill</span>
+                    </span>
+                </div>
+                <button class="icon-action-btn" id="close-skill-editor-btn" title="Close" aria-label="Close">
+                    <i class="fas fa-xmark"></i>
+                </button>
+            </div>
+            <div class="workspace-modal-body">
+                <div class="form-group">
+                    <label class="form-label">Name (kebab-case)</label>
+                    <input class="form-control" id="skill-editor-name" type="text" placeholder="e.g. analyze-logs">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <input class="form-control" id="skill-editor-description" type="text" placeholder="What this skill does">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Tags (comma-separated)</label>
+                    <input class="form-control" id="skill-editor-tags" type="text" placeholder="e.g. analysis, code, devops">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Parameters</label>
+                    <textarea class="form-control" id="skill-editor-parameters" rows="2" placeholder="One per line: name=description&#10;e.g. text=The text to analyze"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Code</label>
+                    <p class="skill-editor-hint">Python only. Define a <code>main(**kwargs)</code> function that returns a string result. Available modules: <code>json</code>, <code>math</code>, <code>re</code>, <code>datetime</code>, <code>time</code>, <code>random</code>, <code>string</code>, <code>itertools</code>, <code>collections</code>, <code>functools</code>, <code>textwrap</code>, <code>hashlib</code>, <code>base64</code>, <code>csv</code>, <code>io</code>, <code>statistics</code>, <code>urllib.parse</code>.</p>
+                    <details class="skill-example-section">
+                        <summary>Show example</summary>
+                        <pre class="skill-example-code">def main(**kwargs):
+    text = kwargs.get("text", "")
+
+    words = len(text.split())
+    lines = text.count("\n") + (1 if text else 0)
+    chars = len(text)
+
+    return f"{words} words, {lines} lines, {chars} characters"</pre>
+                        <p class="skill-example-note">For this example, you would fill in the form fields above as:<br>
+                            <strong>Name:</strong> <code>word-count</code><br>
+                            <strong>Description:</strong> <code>Count words, lines, and characters in the given text</code><br>
+                            <strong>Tags:</strong> <code>text, analysis</code><br>
+                            <strong>Parameters:</strong> <code>text=The text to analyze</code></p>
+                    </details>
+                    <div id="skill-editor-code-wrapper"></div>
+                </div>
+                <div class="form-group" id="skill-editor-changes-group" hidden>
+                    <label class="form-label">Change notes</label>
+                    <input class="form-control" id="skill-editor-changes" type="text" placeholder="What changed in this version">
+                </div>
+                <div class="details-actions">
+                    <button class="btn btn-primary" id="skill-editor-save-btn">Create Skill</button>
+                    <button class="btn btn-secondary" id="skill-editor-cancel-btn">Cancel</button>
+                    <span class="form-status" id="skill-editor-status"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+
+    <!-- CodeMirror (skill editor) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/matchbrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/closebrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/comment/comment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/selection/active-line.min.js"></script>
+
     <script src="/static/app.js"></script>
 </body>
 </html>

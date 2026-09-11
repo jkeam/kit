@@ -790,6 +790,91 @@ async def list_skills_endpoint():
     return list(skills.metadata.values())
 
 
+class SkillCreateRequest(BaseModel):
+    name: str
+    description: str
+    code: str
+    parameters: Optional[Dict[str, str]] = None
+    tags: Optional[List[str]] = None
+
+
+class SkillUpdateRequest(BaseModel):
+    description: Optional[str] = None
+    code: Optional[str] = None
+    changes: str = ""
+    tags: Optional[List[str]] = None
+    parameters: Optional[Dict[str, str]] = None
+
+
+@app.get("/skills/{name}", dependencies=[Depends(_require_gateway_token)])
+async def get_skill(name: str):
+    """Get a single skill's metadata and source code."""
+    sm = _require_session_manager()
+    from runtime.skills import SkillsManager
+    mgr = SkillsManager(str(sm.agent_registry.workspace_dir))
+    meta = mgr.get_skill_info(name)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
+    skill_file = mgr.skills_dir / f"{name}.py"
+    code = skill_file.read_text() if skill_file.exists() else ""
+    return {**meta, "code": code}
+
+
+@app.post("/skills", dependencies=[Depends(_require_gateway_token)])
+async def create_skill(request: SkillCreateRequest):
+    """Create a new skill in the library."""
+    sm = _require_session_manager()
+    from runtime.skills import SkillsManager
+    mgr = SkillsManager(str(sm.agent_registry.workspace_dir))
+    result = mgr.create_skill(
+        name=request.name,
+        description=request.description,
+        code=request.code,
+        parameters=request.parameters,
+        tags=request.tags,
+    )
+    if result.startswith("Error"):
+        raise HTTPException(status_code=400, detail=result)
+    return mgr.get_skill_info(request.name)
+
+
+@app.put("/skills/{name}", dependencies=[Depends(_require_gateway_token)])
+async def update_skill(name: str, request: SkillUpdateRequest):
+    """Update an existing skill's code, description, or tags."""
+    sm = _require_session_manager()
+    from runtime.skills import SkillsManager
+    mgr = SkillsManager(str(sm.agent_registry.workspace_dir))
+    meta = mgr.get_skill_info(name)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
+    if request.description is not None:
+        meta["description"] = request.description
+        mgr._save_metadata()
+    if request.tags is not None:
+        meta["tags"] = request.tags
+        mgr._save_metadata()
+    if request.parameters is not None:
+        meta["parameters"] = request.parameters
+        mgr._save_metadata()
+    if request.code is not None:
+        result = mgr.improve_skill(name, request.changes or "Updated via UI", request.code)
+        if result.startswith("Error"):
+            raise HTTPException(status_code=400, detail=result)
+    return mgr.get_skill_info(name)
+
+
+@app.delete("/skills/{name}", dependencies=[Depends(_require_gateway_token)])
+async def delete_skill(name: str):
+    """Delete a skill from the library."""
+    sm = _require_session_manager()
+    from runtime.skills import SkillsManager
+    mgr = SkillsManager(str(sm.agent_registry.workspace_dir))
+    result = mgr.delete_skill(name)
+    if result.startswith("Error"):
+        raise HTTPException(status_code=404, detail=result)
+    return {"message": result}
+
+
 async def _generate_broadcast_reactions(message: str, message_id: str, session_id: str):
     """Ask the LLM to pick one emoji per team member, then broadcast them."""
     try:

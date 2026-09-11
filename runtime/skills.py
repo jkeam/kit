@@ -25,6 +25,7 @@ _SKILL_TIMEOUT_SECONDS = env_int("SKILL_TIMEOUT_SECONDS", 60)
 _SAFE_MODULES = (
     "json", "math", "re", "datetime", "time", "random", "string",
     "itertools", "collections", "functools", "textwrap",
+    "hashlib", "base64", "csv", "io", "statistics", "urllib.parse",
 )
 
 # Builtins a skill is allowed to use. Notably excludes open, eval, exec,
@@ -188,6 +189,10 @@ Version: 1
             lines.append(f"📦 **{skill['name']}** (v{skill['version']})")
             lines.append(f"   {skill['description']}")
             lines.append(f"   Usage: {skill['usage_count']} times | Success: {skill['success_rate']:.1%}")
+
+            if skill.get('parameters'):
+                param_parts = [f"{k}: {v}" for k, v in skill['parameters'].items()]
+                lines.append(f"   Parameters: {', '.join(param_parts)}")
 
             if skill['tags']:
                 lines.append(f"   Tags: {', '.join(skill['tags'])}")
