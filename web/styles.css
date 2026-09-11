@@ -680,7 +680,7 @@ button.chat-header-menu {
 }
 
 .add-reaction-btn {
-    display: none;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 28px;
@@ -690,13 +690,15 @@ button.chat-header-menu {
     background: transparent;
     cursor: pointer;
     font-size: 14px;
-    opacity: 0.5;
-    transition: opacity 0.15s ease, background 0.15s ease;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease, background 0.15s ease, visibility 0.15s ease;
     padding: 0;
 }
 
 .message:hover .add-reaction-btn {
-    display: inline-flex;
+    visibility: visible;
+    opacity: 0.5;
 }
 
 .add-reaction-btn:hover {
