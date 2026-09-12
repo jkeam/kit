@@ -2452,11 +2452,20 @@ function setSkillEditorType(type) {
     document.getElementById('skill-editor-example-prompt').hidden = !isPrompt;
     document.getElementById('skill-editor-code-label').textContent = isPrompt ? 'Content' : 'Code';
 
+    document.getElementById('skill-editor-name').placeholder = isPrompt
+        ? 'e.g. python-best-practices'
+        : 'e.g. word-count';
+    document.getElementById('skill-editor-description').placeholder = isPrompt
+        ? 'e.g. Python coding standards and conventions'
+        : 'e.g. Count words, lines, and characters in the given text';
+    document.getElementById('skill-editor-tags').placeholder = isPrompt
+        ? 'e.g. python, best-practices, code-style'
+        : 'e.g. text, analysis';
+
     if (skillEditorMode === 'create') {
         const title = isPrompt ? 'New Skill' : 'New Custom Tool';
         skillEditorTitle.textContent = title;
         skillEditorSaveBtn.textContent = isPrompt ? 'Create Skill' : 'Create Custom Tool';
-        skillEditorName.placeholder = isPrompt ? 'e.g. python-best-practices' : 'e.g. analyze-logs';
     }
 
     if (skillCodeMirror) {
