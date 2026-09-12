@@ -1019,14 +1019,18 @@ function parseToolOrSkillInput(value) {
     return trimmed.split(',').map(s => s.trim()).filter(Boolean);
 }
 
-async function renderCheckboxGroup(containerId, endpoint, selected) {
+async function renderCheckboxGroup(containerId, endpoint, selected, filterType) {
     const container = document.getElementById(containerId);
     if (!container) return;
     container.innerHTML = '<div class="spinner" style="margin:8px auto;"></div>';
     try {
         const response = await apiFetch(`${API_BASE}${endpoint}`);
         if (!response.ok) throw new Error('Failed to load');
-        const items = await response.json();
+        let items = await response.json();
+        if (filterType) {
+            items = items.filter(item => filterType === 'prompt' ? item.type === 'prompt' : item.type !== 'prompt');
+        }
+        container.dataset.allNames = JSON.stringify(items.map(i => i.name));
         if (items.length === 0) {
             container.innerHTML = '<div class="empty-state" style="padding:6px 0;">None available</div>';
             return;
@@ -1040,7 +1044,7 @@ async function renderCheckboxGroup(containerId, endpoint, selected) {
         html += '<div class="cb-items">';
         items.forEach(item => {
             const checked = isWildcard || (selectedSet && selectedSet.has(item.name));
-            const typeBadge = item.type ? `<span class="cb-type-badge cb-type-${item.type === 'prompt' ? 'skill' : 'tool'}">${item.type === 'prompt' ? 'skill' : 'custom tool'}</span>` : '';
+            const typeBadge = !filterType && item.type ? `<span class="cb-type-badge cb-type-${item.type === 'prompt' ? 'skill' : 'tool'}">${item.type === 'prompt' ? 'skill' : 'custom tool'}</span>` : '';
             html += `<label class="cb-row" title="${escapeAttr(item.description || '')}">
                 <input type="checkbox" value="${escapeAttr(item.name)}" ${checked ? 'checked' : ''} ${isWildcard ? 'disabled' : ''}>
                 <span class="cb-name">${escapeHtml(item.name)}</span>${typeBadge}
@@ -1057,6 +1061,24 @@ async function renderCheckboxGroup(containerId, endpoint, selected) {
     } catch (error) {
         container.innerHTML = `<div class="empty-state" style="padding:6px 0;">Error: ${escapeHtml(error.message)}</div>`;
     }
+}
+
+function readCombinedCheckboxGroups(...ids) {
+    const results = ids.map(id => readCheckboxGroup(id));
+    if (results.every(r => r === '*')) return '*';
+    let combined = [];
+    for (let i = 0; i < ids.length; i++) {
+        const val = results[i];
+        if (val === '*') {
+            const container = document.getElementById(ids[i]);
+            if (container && container.dataset.allNames) {
+                combined.push(...JSON.parse(container.dataset.allNames));
+            }
+        } else if (Array.isArray(val)) {
+            combined.push(...val);
+        }
+    }
+    return combined;
 }
 
 function readCheckboxGroup(containerId) {
@@ -1235,7 +1257,14 @@ async function renderMemberDetails(agentId) {
 
     html += `
         <div class="details-section">
-            <div class="details-section-label">Custom Tools & Skills</div>
+            <div class="details-section-label">Custom Tools</div>
+            <div id="details-custom-tools-list"><div class="spinner" style="margin:12px auto;"></div></div>
+        </div>
+    `;
+
+    html += `
+        <div class="details-section">
+            <div class="details-section-label">Skills</div>
             <div id="details-skills-list"><div class="spinner" style="margin:12px auto;"></div></div>
         </div>
     `;
@@ -1328,6 +1357,7 @@ async function renderMemberDetails(agentId) {
 
     renderMcpReadonly('details-mcp-list', agent.mcp_servers);
     loadDetailsTools(agentId);
+    loadDetailsCustomTools(agentId);
     loadDetailsSkills(agentId);
     loadMiniActivity(agentId);
 }
@@ -1457,7 +1487,11 @@ function renderMemberEditForm(agentId) {
             <div id="edit-tools-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
-            <label class="form-label">Custom Tools & Skills</label>
+            <label class="form-label">Custom Tools</label>
+            <div id="edit-custom-tools-cb" class="cb-group"></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Skills</label>
             <div id="edit-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
@@ -1504,7 +1538,8 @@ function renderMemberEditForm(agentId) {
     });
 
     renderCheckboxGroup('edit-tools-cb', '/tools', agent.tools);
-    renderCheckboxGroup('edit-skills-cb', '/skills', agent.skills);
+    renderCheckboxGroup('edit-custom-tools-cb', '/skills', agent.skills, 'executable');
+    renderCheckboxGroup('edit-skills-cb', '/skills', agent.skills, 'prompt');
     renderMcpEditor('edit-mcp-servers', agent.mcp_servers);
 }
 
@@ -1515,7 +1550,7 @@ async function saveMemberEdit(agentId) {
         name: document.getElementById('edit-name').value.trim(),
         description: document.getElementById('edit-description').value.trim(),
         tools: readCheckboxGroup('edit-tools-cb'),
-        skills: readCheckboxGroup('edit-skills-cb'),
+        skills: readCombinedCheckboxGroups('edit-custom-tools-cb', 'edit-skills-cb'),
         model: document.getElementById('edit-model').value.trim() || null,
         provider: document.getElementById('edit-provider').value.trim() || null,
         soul: document.getElementById('edit-soul').value,
@@ -1699,7 +1734,11 @@ function renderCreateTemplateForm() {
             <div id="tpl-tools-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
-            <label class="form-label">Custom Tools & Skills</label>
+            <label class="form-label">Custom Tools</label>
+            <div id="tpl-custom-tools-cb" class="cb-group"></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Skills</label>
             <div id="tpl-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
@@ -1721,7 +1760,8 @@ function renderCreateTemplateForm() {
     document.getElementById('template-cancel-btn').addEventListener('click', renderAddTeammateForm);
     document.getElementById('save-template-btn').addEventListener('click', createTemplate);
     renderCheckboxGroup('tpl-tools-cb', '/tools', ['read', 'list_files', 'exec_shell', 'memory_search', 'memory_write', 'memory_get', 'knowledge_teach', 'knowledge_ingest', 'knowledge_ingest_url', 'knowledge_search', 'knowledge_list', 'knowledge_forget']);
-    renderCheckboxGroup('tpl-skills-cb', '/skills', '*');
+    renderCheckboxGroup('tpl-custom-tools-cb', '/skills', '*', 'executable');
+    renderCheckboxGroup('tpl-skills-cb', '/skills', '*', 'prompt');
     renderMcpEditor('tpl-mcp-servers', null);
 }
 
@@ -1748,7 +1788,7 @@ async function createTemplate() {
         name,
         description: document.getElementById('tpl-description').value.trim(),
         tools: readCheckboxGroup('tpl-tools-cb'),
-        skills: readCheckboxGroup('tpl-skills-cb'),
+        skills: readCombinedCheckboxGroups('tpl-custom-tools-cb', 'tpl-skills-cb'),
         soul: document.getElementById('tpl-soul').value,
     };
     template.mcp_servers = mcpServers;
@@ -1813,7 +1853,11 @@ async function renderEditTemplateForm(templateId) {
             <div id="tpl-tools-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
-            <label class="form-label">Custom Tools & Skills</label>
+            <label class="form-label">Custom Tools</label>
+            <div id="tpl-custom-tools-cb" class="cb-group"></div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Skills</label>
             <div id="tpl-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
@@ -1837,7 +1881,8 @@ async function renderEditTemplateForm(templateId) {
     document.getElementById('save-template-btn').addEventListener('click', () => saveTemplate(tpl.id));
     document.getElementById('delete-template-btn').addEventListener('click', () => deleteTemplate(tpl.id));
     renderCheckboxGroup('tpl-tools-cb', '/tools', tpl.tools || []);
-    renderCheckboxGroup('tpl-skills-cb', '/skills', tpl.skills || []);
+    renderCheckboxGroup('tpl-custom-tools-cb', '/skills', tpl.skills || [], 'executable');
+    renderCheckboxGroup('tpl-skills-cb', '/skills', tpl.skills || [], 'prompt');
     renderMcpEditor('tpl-mcp-servers', tpl.mcp_servers);
 }
 
@@ -1857,7 +1902,7 @@ async function saveTemplate(templateId) {
         name,
         description: document.getElementById('tpl-description').value.trim(),
         tools: readCheckboxGroup('tpl-tools-cb'),
-        skills: readCheckboxGroup('tpl-skills-cb'),
+        skills: readCombinedCheckboxGroups('tpl-custom-tools-cb', 'tpl-skills-cb'),
         soul: document.getElementById('tpl-soul').value,
     };
     template.mcp_servers = mcpServers;
@@ -1955,6 +2000,7 @@ function updateDefaultTeamBtnVisibility() {
 const WORKSPACE_LOADERS = {
     activity: loadActivity,
     schedules: loadSchedules,
+    'custom-tools': loadCustomToolsLibrary,
     skills: loadSkillsLibrary,
 };
 
@@ -2016,6 +2062,33 @@ async function loadDetailsTools(agentId) {
     }
 }
 
+async function loadDetailsCustomTools(agentId) {
+    const container = document.getElementById('details-custom-tools-list');
+    if (!container) return;
+    container.innerHTML = '<div class="spinner" style="margin:12px auto;"></div>';
+    try {
+        const response = await apiFetch(`${API_BASE}/skills`);
+        if (!response.ok) throw new Error('Failed to load custom tools');
+        const allSkills = await response.json();
+        const agent = agentsById[agentId];
+        const allowed = agent ? agent.skills : '*';
+        const customTools = (allowed === '*' ? allSkills : allSkills.filter(s => allowed.includes(s.name)))
+            .filter(s => s.type !== 'prompt');
+        if (customTools.length === 0) {
+            container.innerHTML = '<div class="empty-state" style="padding:10px 0;">No custom tools</div>';
+            return;
+        }
+        container.innerHTML = customTools.map(skill => `
+            <div class="tool-entry">
+                <div class="tool-entry-name">${escapeHtml(skill.name)}</div>
+                <div class="tool-entry-desc">${escapeHtml(skill.description || '')}</div>
+            </div>
+        `).join('');
+    } catch (error) {
+        container.innerHTML = `<div class="empty-state" style="padding:10px 0;">Error: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
 async function loadDetailsSkills(agentId) {
     const container = document.getElementById('details-skills-list');
     if (!container) return;
@@ -2026,19 +2099,18 @@ async function loadDetailsSkills(agentId) {
         const allSkills = await response.json();
         const agent = agentsById[agentId];
         const allowed = agent ? agent.skills : '*';
-        const skills = allowed === '*' ? allSkills : allSkills.filter(s => allowed.includes(s.name));
+        const skills = (allowed === '*' ? allSkills : allSkills.filter(s => allowed.includes(s.name)))
+            .filter(s => s.type === 'prompt');
         if (skills.length === 0) {
-            container.innerHTML = '<div class="empty-state" style="padding:10px 0;">No custom tools or skills</div>';
+            container.innerHTML = '<div class="empty-state" style="padding:10px 0;">No skills</div>';
             return;
         }
-        container.innerHTML = skills.map(skill => {
-            const typeBadge = skill.type === 'prompt' ? 'skill' : 'custom tool';
-            return `
+        container.innerHTML = skills.map(skill => `
             <div class="tool-entry">
-                <div class="tool-entry-name">${escapeHtml(skill.name)} <span class="cb-type-badge cb-type-${skill.type === 'prompt' ? 'skill' : 'tool'}">${typeBadge}</span></div>
+                <div class="tool-entry-name">${escapeHtml(skill.name)}</div>
                 <div class="tool-entry-desc">${escapeHtml(skill.description || '')}</div>
             </div>
-        `;}).join('');
+        `).join('');
     } catch (error) {
         container.innerHTML = `<div class="empty-state" style="padding:10px 0;">Error: ${escapeHtml(error.message)}</div>`;
     }
@@ -2340,6 +2412,9 @@ document.getElementById('knowledge-search-input')?.addEventListener('keydown', (
 
 // --- Skills Library ---
 
+const customToolsLibraryList = document.getElementById('custom-tools-library-list');
+const refreshCustomToolsBtn = document.getElementById('refresh-custom-tools');
+const createCustomToolBtn = document.getElementById('create-custom-tool-btn');
 const skillsLibraryList = document.getElementById('skills-library-list');
 const refreshSkillsBtn = document.getElementById('refresh-skills');
 const createSkillBtn = document.getElementById('create-skill-btn');
@@ -2457,6 +2532,75 @@ function formatSuccessRate(rate) {
     return `${(rate * 100).toFixed(0)}%`;
 }
 
+function renderSkillCards(listEl, items, emptyMessage) {
+    if (items.length === 0) {
+        listEl.innerHTML = `<p class="empty-state">${escapeHtml(emptyMessage)}</p>`;
+        return;
+    }
+    const sorted = items.sort((a, b) => b.usage_count - a.usage_count);
+    listEl.innerHTML = sorted.map(skill => {
+        const tags = (skill.tags || []).map(t => `<span class="skill-tag">${escapeHtml(t)}</span>`).join('');
+        return `
+            <div class="skill-card" data-skill-name="${escapeAttr(skill.name)}">
+                <div class="skill-card-header">
+                    <span class="skill-card-name">${escapeHtml(skill.name)}</span>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span class="skill-card-version">v${skill.version}</span>
+                        <div class="skill-card-actions">
+                            <button class="btn btn-secondary skill-edit-btn" data-skill="${escapeAttr(skill.name)}" title="Edit">
+                                <i class="fas fa-pen"></i>
+                            </button>
+                            <button class="btn btn-danger skill-delete-btn" data-skill="${escapeAttr(skill.name)}" title="Delete">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="skill-card-desc">${escapeHtml(skill.description || '')}</div>
+                <div class="skill-card-meta">
+                    <span>Used ${skill.usage_count || 0} time${skill.usage_count === 1 ? '' : 's'}</span>
+                    <span>Success: ${formatSuccessRate(skill.success_rate)}</span>
+                    ${skill.last_used ? `<span>Last: ${new Date(skill.last_used).toLocaleDateString()}</span>` : ''}
+                </div>
+                ${tags ? `<div class="skill-card-tags" style="margin-top:6px;">${tags}</div>` : ''}
+            </div>
+        `;
+    }).join('');
+
+    listEl.querySelectorAll('.skill-edit-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openSkillEditor('edit', btn.dataset.skill);
+        });
+    });
+    listEl.querySelectorAll('.skill-delete-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteSkill(btn.dataset.skill);
+        });
+    });
+    listEl.querySelectorAll('.skill-card').forEach(card => {
+        card.addEventListener('click', () => openSkillEditor('edit', card.dataset.skillName));
+    });
+}
+
+async function loadCustomToolsLibrary() {
+    if (!customToolsLibraryList) return;
+    refreshCustomToolsBtn.disabled = true;
+    customToolsLibraryList.innerHTML = '<div class="spinner"></div>';
+    try {
+        const response = await apiFetch(`${API_BASE}/skills`);
+        if (!response.ok) throw new Error('Failed to load custom tools');
+        const all = await response.json();
+        const customTools = all.filter(s => s.type !== 'prompt');
+        renderSkillCards(customToolsLibraryList, customTools, 'No custom tools yet. Create one to get started.');
+    } catch (error) {
+        customToolsLibraryList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
+    } finally {
+        refreshCustomToolsBtn.disabled = false;
+    }
+}
+
 async function loadSkillsLibrary() {
     if (!skillsLibraryList) return;
     refreshSkillsBtn.disabled = true;
@@ -2464,59 +2608,9 @@ async function loadSkillsLibrary() {
     try {
         const response = await apiFetch(`${API_BASE}/skills`);
         if (!response.ok) throw new Error('Failed to load skills');
-        const skills = await response.json();
-        if (skills.length === 0) {
-            skillsLibraryList.innerHTML = '<p class="empty-state">No custom tools or skills yet. Create one to get started.</p>';
-            return;
-        }
-        const sorted = skills.sort((a, b) => b.usage_count - a.usage_count);
-        skillsLibraryList.innerHTML = sorted.map(skill => {
-            const tags = (skill.tags || []).map(t => `<span class="skill-tag">${escapeHtml(t)}</span>`).join('');
-            const isPrompt = skill.type === 'prompt';
-            const typeBadge = isPrompt ? 'skill' : 'custom tool';
-            return `
-                <div class="skill-card" data-skill-name="${escapeAttr(skill.name)}">
-                    <div class="skill-card-header">
-                        <span class="skill-card-name">${escapeHtml(skill.name)}</span>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <span class="skill-tag">${typeBadge}</span>
-                            <span class="skill-card-version">v${skill.version}</span>
-                            <div class="skill-card-actions">
-                                <button class="btn btn-secondary skill-edit-btn" data-skill="${escapeAttr(skill.name)}" title="Edit">
-                                    <i class="fas fa-pen"></i>
-                                </button>
-                                <button class="btn btn-danger skill-delete-btn" data-skill="${escapeAttr(skill.name)}" title="Delete">
-                                    <i class="fas fa-trash"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="skill-card-desc">${escapeHtml(skill.description || '')}</div>
-                    <div class="skill-card-meta">
-                        <span>Used ${skill.usage_count || 0} time${skill.usage_count === 1 ? '' : 's'}</span>
-                        <span>Success: ${formatSuccessRate(skill.success_rate)}</span>
-                        ${skill.last_used ? `<span>Last: ${new Date(skill.last_used).toLocaleDateString()}</span>` : ''}
-                    </div>
-                    ${tags ? `<div class="skill-card-tags" style="margin-top:6px;">${tags}</div>` : ''}
-                </div>
-            `;
-        }).join('');
-
-        skillsLibraryList.querySelectorAll('.skill-edit-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                openSkillEditor('edit', btn.dataset.skill);
-            });
-        });
-        skillsLibraryList.querySelectorAll('.skill-delete-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                deleteSkill(btn.dataset.skill);
-            });
-        });
-        skillsLibraryList.querySelectorAll('.skill-card').forEach(card => {
-            card.addEventListener('click', () => openSkillEditor('edit', card.dataset.skillName));
-        });
+        const all = await response.json();
+        const skills = all.filter(s => s.type === 'prompt');
+        renderSkillCards(skillsLibraryList, skills, 'No skills yet. Create one to get started.');
     } catch (error) {
         skillsLibraryList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
     } finally {
@@ -2524,7 +2618,7 @@ async function loadSkillsLibrary() {
     }
 }
 
-function openSkillEditor(mode, name) {
+function openSkillEditor(mode, name, defaultType) {
     skillEditorMode = mode;
     skillEditorOriginalName = name || null;
     skillEditorStatus.textContent = '';
@@ -2535,8 +2629,8 @@ function openSkillEditor(mode, name) {
     const typeGroup = document.getElementById('skill-editor-type-group');
 
     if (mode === 'create') {
-        typeGroup.hidden = false;
-        setSkillEditorType('executable');
+        typeGroup.hidden = !!defaultType;
+        setSkillEditorType(defaultType || 'executable');
         skillEditorName.value = '';
         skillEditorName.disabled = false;
         skillEditorDescription.value = '';
@@ -2638,7 +2732,8 @@ async function saveSkill() {
         skillEditorStatus.className = 'form-status success';
         setTimeout(() => {
             closeSkillEditor();
-            loadSkillsLibrary();
+            if (currentWorkspaceTab === 'custom-tools') loadCustomToolsLibrary();
+            else if (currentWorkspaceTab === 'skills') loadSkillsLibrary();
         }, 600);
     } catch (error) {
         skillEditorStatus.textContent = `Error: ${error.message}`;
@@ -2649,21 +2744,24 @@ async function saveSkill() {
 }
 
 async function deleteSkill(name) {
-    if (!confirm(`Delete custom tool "${name}"? This cannot be undone.`)) return;
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
     try {
         const response = await apiFetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
             throw new Error(err.detail || `HTTP ${response.status}`);
         }
-        await loadSkillsLibrary();
+        if (currentWorkspaceTab === 'custom-tools') await loadCustomToolsLibrary();
+        else await loadSkillsLibrary();
     } catch (error) {
-        alert(`Failed to delete skill: ${error.message}`);
+        alert(`Failed to delete: ${error.message}`);
     }
 }
 
+if (refreshCustomToolsBtn) refreshCustomToolsBtn.addEventListener('click', loadCustomToolsLibrary);
+if (createCustomToolBtn) createCustomToolBtn.addEventListener('click', () => openSkillEditor('create', null, 'executable'));
 if (refreshSkillsBtn) refreshSkillsBtn.addEventListener('click', loadSkillsLibrary);
-if (createSkillBtn) createSkillBtn.addEventListener('click', () => openSkillEditor('create'));
+if (createSkillBtn) createSkillBtn.addEventListener('click', () => openSkillEditor('create', null, 'prompt'));
 if (closeSkillEditorBtn) closeSkillEditorBtn.addEventListener('click', closeSkillEditor);
 if (skillEditorCancelBtn) skillEditorCancelBtn.addEventListener('click', closeSkillEditor);
 if (skillEditorSaveBtn) skillEditorSaveBtn.addEventListener('click', saveSkill);

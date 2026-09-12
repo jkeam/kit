@@ -36,8 +36,11 @@
             <button class="rail-btn" data-panel="schedules" title="Schedules" aria-label="Schedules">
                 <i class="fas fa-clock"></i>
             </button>
-            <button class="rail-btn" data-panel="skills" title="Custom Tools & Skills" aria-label="Custom Tools & Skills">
-                <i class="fas fa-puzzle-piece"></i>
+            <button class="rail-btn" data-panel="custom-tools" title="Custom Tools" aria-label="Custom Tools">
+                <i class="fas fa-code"></i>
+            </button>
+            <button class="rail-btn" data-panel="skills" title="Skills" aria-label="Skills">
+                <i class="fas fa-book"></i>
             </button>
             <div class="rail-spacer"></div>
 
@@ -129,8 +132,11 @@
                     <button class="workspace-tab" data-tab="schedules">
                         <i class="fas fa-clock"></i> Schedules
                     </button>
+                    <button class="workspace-tab" data-tab="custom-tools">
+                        <i class="fas fa-code"></i> Custom Tools
+                    </button>
                     <button class="workspace-tab" data-tab="skills">
-                        <i class="fas fa-puzzle-piece"></i> Custom Tools & Skills
+                        <i class="fas fa-book"></i> Skills
                     </button>
                 </div>
                 <button class="icon-action-btn" id="close-workspace-btn" title="Close" aria-label="Close">
@@ -148,10 +154,18 @@
                     <div id="schedules-list"></div>
                 </div>
 
+                <div id="custom-tools-tab" class="tab-content">
+                    <div class="skills-header">
+                        <button id="refresh-custom-tools" class="btn btn-secondary">Refresh</button>
+                        <button id="create-custom-tool-btn" class="btn btn-primary"><i class="fas fa-plus"></i> New Custom Tool</button>
+                    </div>
+                    <div id="custom-tools-library-list"></div>
+                </div>
+
                 <div id="skills-tab" class="tab-content">
                     <div class="skills-header">
                         <button id="refresh-skills" class="btn btn-secondary">Refresh</button>
-                        <button id="create-skill-btn" class="btn btn-primary"><i class="fas fa-plus"></i> New Custom Tool</button>
+                        <button id="create-skill-btn" class="btn btn-primary"><i class="fas fa-plus"></i> New Skill</button>
                     </div>
                     <div id="skills-library-list"></div>
                 </div>
