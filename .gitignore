@@ -52,6 +52,7 @@ workspace/USER.md
 workspace/schedules/schedules.json
 workspace/skills/skills_metadata.json
 workspace/skills/*.py
+workspace/skills/*.md
 workspace/skills/*.bak
 
 # Instantiated team roster (per-user; built-in presets live in templates/agents/)
@@ -61,6 +62,7 @@ workspace/agent_templates/
 # Temporary files
 *.tmp
 *.bak
+workspace/tmp/
 
 ignore/*
 kit-code-review.md
