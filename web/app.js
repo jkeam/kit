@@ -2035,7 +2035,11 @@ workspaceOverlay.addEventListener('click', (e) => {
     if (e.target === workspaceOverlay) closeWorkspacePanel();
 });
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !workspaceOverlay.hidden) closeWorkspacePanel();
+    if (e.key !== 'Escape') return;
+    if (providerEditorOverlay && !providerEditorOverlay.hidden) { closeProviderEditor(); return; }
+    if (skillEditorOverlay && !skillEditorOverlay.hidden) { closeSkillEditor(); return; }
+    if (!knowledgeOverlay.hidden) { closeKnowledgeModal(); return; }
+    if (!workspaceOverlay.hidden) closeWorkspacePanel();
 });
 
 // --- Details panel: Memory / Tools / Skills (scoped to current agent) ---
@@ -2398,9 +2402,6 @@ async function searchKnowledge() {
 closeKnowledgeBtn.addEventListener('click', closeKnowledgeModal);
 knowledgeOverlay.addEventListener('click', (e) => {
     if (e.target === knowledgeOverlay) closeKnowledgeModal();
-});
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !knowledgeOverlay.hidden) closeKnowledgeModal();
 });
 document.getElementById('knowledge-fact-btn')?.addEventListener('click', addKnowledgeFact);
 document.getElementById('knowledge-url-btn')?.addEventListener('click', ingestKnowledgeUrl);
@@ -2781,9 +2782,6 @@ if (skillEditorSaveBtn) skillEditorSaveBtn.addEventListener('click', saveSkill);
 if (skillEditorOverlay) {
     skillEditorOverlay.addEventListener('click', (e) => {
         if (e.target === skillEditorOverlay) closeSkillEditor();
-    });
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !skillEditorOverlay.hidden) closeSkillEditor();
     });
 }
 
