@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Callable, Dict, Optional, List, AsyncGenerator, Any, Awaitable
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
-from runtime.agent import PersonalAssistant
-from runtime.agents import KIT_AGENT_ID, AgentRegistry
+from runtime.agent import PersonalAssistant, OPENAI_COMPATIBLE_PROVIDERS
+from runtime.agents import KIT_AGENT_ID, AgentDefinition, AgentRegistry
 from runtime.embeddings import EmbeddingsManager
+from runtime.providers import ProviderConfig, ProviderRegistry
 
 # How many recent cross-agent activity entries (tool calls, delegation,
 # status changes) to keep for the "Team Activity" inspection view.
@@ -74,6 +75,7 @@ class SessionManager:
         llm_extra_headers: Optional[Dict[str, str]] = None,
         agent_registry: Optional[AgentRegistry] = None,
         on_event: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        provider_registry: Optional[ProviderRegistry] = None,
     ):
         self.llm_base_url = llm_base_url
         self.model = model
@@ -82,6 +84,9 @@ class SessionManager:
         self.llm_extra_headers = llm_extra_headers
         self.sessions: Dict[str, Session] = {}
         self.agent_registry = agent_registry or AgentRegistry()
+        self.provider_registry = provider_registry or ProviderRegistry(
+            str(self.agent_registry.workspace_dir)
+        )
         # Persisted chat history lives under the same workspace the agent
         # registry uses - tied together so tests/alternate workspaces never
         # touch the real workspace/sessions/ directory by accident.
@@ -130,13 +135,15 @@ class SessionManager:
             if defn is None:
                 raise ValueError(f"Unknown agent '{agent_id}'")
 
+            base_url, model, provider_type, api_key, extra_headers = self._resolve_llm_params(defn)
+
             agent = PersonalAssistant(
-                base_url=self.llm_base_url,
-                model=defn.model or self.model,
-                provider=defn.provider or self.llm_provider,
+                base_url=base_url,
+                model=model,
+                provider=provider_type,
                 workspace_dir=str(self.agent_registry.workspace_dir),
-                api_key=self.llm_api_key,
-                extra_headers=self.llm_extra_headers,
+                api_key=api_key,
+                extra_headers=extra_headers,
                 embeddings=self.embeddings,
                 allowed_tools=defn.allowed_tools,
                 allowed_skills=defn.allowed_skills,
@@ -159,6 +166,75 @@ class SessionManager:
         session = self.sessions[session_id]
         session.update_activity()
         return session
+
+    def _resolve_provider(self, defn: AgentDefinition) -> Optional[ProviderConfig]:
+        """Resolve which provider config an agent should use.
+
+        1. agent.provider matches a provider config ID → use it
+        2. agent.provider matches a provider config type → first match (backward compat)
+        3. Fall back to the default provider (is_default=True)
+        4. None → caller uses legacy SessionManager.llm_* attrs
+        """
+        if defn.provider:
+            config = self.provider_registry.resolve(defn.provider)
+            if config:
+                return config
+            for p in self.provider_registry.list_providers():
+                if p.type == defn.provider:
+                    return p
+        return self.provider_registry.get_default()
+
+    def _resolve_llm_params(self, defn: AgentDefinition) -> tuple:
+        """Return (base_url, model, provider_type, api_key, extra_headers)
+        for an agent definition, resolved through the provider registry."""
+        provider_config = self._resolve_provider(defn)
+        if provider_config:
+            creds = self.provider_registry.resolve_credentials(provider_config)
+            return (
+                provider_config.base_url,
+                defn.model or provider_config.default_model,
+                provider_config.type,
+                creds["api_key"],
+                creds["extra_headers"],
+            )
+        return (
+            self.llm_base_url,
+            defn.model or self.model,
+            defn.provider or self.llm_provider,
+            self.llm_api_key,
+            self.llm_extra_headers,
+        )
+
+    def create_client_for_agent(self, agent_defn: AgentDefinition):
+        """Return (client, model, provider_type) for broadcast/one-off use."""
+        base_url, model, provider_type, api_key, extra_headers = self._resolve_llm_params(agent_defn)
+        if provider_type in OPENAI_COMPATIBLE_PROVIDERS:
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(
+                base_url=base_url,
+                api_key=api_key or "not-needed",
+                default_headers=extra_headers,
+            )
+        else:
+            from llama_stack_client import AsyncLlamaStackClient
+            client = AsyncLlamaStackClient(
+                base_url=base_url,
+                default_headers=extra_headers,
+            )
+        return client, model, provider_type
+
+    def evict_sessions_for_provider(self, provider_id: str) -> None:
+        """Remove cached sessions whose agent uses the given provider,
+        so the next message reconstructs the client with updated config."""
+        to_remove = []
+        for sid, session in self.sessions.items():
+            defn = self.agent_registry.resolve(session.agent_id)
+            if defn:
+                resolved = self._resolve_provider(defn)
+                if resolved and resolved.id == provider_id:
+                    to_remove.append(sid)
+        for sid in to_remove:
+            del self.sessions[sid]
 
     async def send_message(
         self, platform: str, user_id: str, message: str, agent_id: str = KIT_AGENT_ID

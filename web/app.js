@@ -1495,12 +1495,14 @@ function renderMemberEditForm(agentId) {
             <div id="edit-skills-cb" class="cb-group"></div>
         </div>
         <div class="form-group">
-            <label class="form-label">Model (blank for default)</label>
-            <input class="form-control" id="edit-model" type="text" value="${escapeAttr(agent.model || '')}" placeholder="e.g. gpt-4o, qwen3:14b">
+            <label class="form-label">Provider (blank for default)</label>
+            <select class="form-control" id="edit-provider">
+                <option value="">(use default provider)</option>
+            </select>
         </div>
         <div class="form-group">
-            <label class="form-label">Provider (blank for default)</label>
-            <input class="form-control" id="edit-provider" type="text" value="${escapeAttr(agent.provider || '')}" placeholder="e.g. ollama, openai, llamastack">
+            <label class="form-label">Model (blank for provider default)</label>
+            <input class="form-control" id="edit-model" type="text" value="${escapeAttr(agent.model || '')}" placeholder="e.g. gpt-4o, qwen3:14b">
         </div>
         <div class="form-group">
             <label class="form-label">MCP Servers</label>
@@ -1541,6 +1543,7 @@ function renderMemberEditForm(agentId) {
     renderCheckboxGroup('edit-custom-tools-cb', '/skills', agent.skills, 'executable');
     renderCheckboxGroup('edit-skills-cb', '/skills', agent.skills, 'prompt');
     renderMcpEditor('edit-mcp-servers', agent.mcp_servers);
+    populateProviderDropdown('edit-provider', agent.provider);
 }
 
 async function saveMemberEdit(agentId) {
@@ -2002,6 +2005,7 @@ const WORKSPACE_LOADERS = {
     schedules: loadSchedules,
     'custom-tools': loadCustomToolsLibrary,
     skills: loadSkillsLibrary,
+    providers: loadProviders,
 };
 
 function openWorkspacePanel(tabName) {
@@ -2780,6 +2784,234 @@ if (skillEditorOverlay) {
     });
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !skillEditorOverlay.hidden) closeSkillEditor();
+    });
+}
+
+// --- Provider management ---
+
+const providersList = document.getElementById('providers-list');
+const refreshProvidersBtn = document.getElementById('refresh-providers');
+const createProviderBtn = document.getElementById('create-provider-btn');
+const providerEditorOverlay = document.getElementById('provider-editor-overlay');
+const closeProviderEditorBtn = document.getElementById('close-provider-editor-btn');
+const providerEditorCancelBtn = document.getElementById('provider-editor-cancel-btn');
+const providerEditorSaveBtn = document.getElementById('provider-editor-save-btn');
+const providerEditorStatus = document.getElementById('provider-editor-status');
+let providerEditorMode = 'create';
+
+async function loadProviders() {
+    if (!providersList) return;
+    if (refreshProvidersBtn) refreshProvidersBtn.disabled = true;
+    providersList.innerHTML = '<div class="spinner"></div>';
+    try {
+        const response = await apiFetch(`${API_BASE}/providers`);
+        if (!response.ok) throw new Error('Failed to load providers');
+        const providers = await response.json();
+        if (providers.length === 0) {
+            providersList.innerHTML = '<p class="empty-state">No providers configured. Create one to get started, or set LLM_* env vars and restart.</p>';
+            return;
+        }
+        providersList.innerHTML = providers.map(renderProviderCard).join('');
+        providersList.querySelectorAll('.provider-edit-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openProviderEditor('edit', btn.dataset.provider);
+            });
+        });
+        providersList.querySelectorAll('.provider-delete-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteProvider(btn.dataset.provider);
+            });
+        });
+    } catch (error) {
+        providersList.innerHTML = `<p class="empty-state">Error: ${escapeHtml(error.message)}</p>`;
+    } finally {
+        if (refreshProvidersBtn) refreshProvidersBtn.disabled = false;
+    }
+}
+
+function renderProviderCard(provider) {
+    const apiKeyDot = provider.api_key_env
+        ? `<span class="env-status-dot ${provider.api_key_set ? 'env-set' : 'env-unset'}" title="${escapeAttr(provider.api_key_env)}: ${provider.api_key_set ? 'set' : 'NOT set'}"></span> ${escapeHtml(provider.api_key_env)}`
+        : '<span class="env-na">no key needed</span>';
+    const headersDot = provider.extra_headers_env
+        ? `<span class="env-status-dot ${provider.extra_headers_set ? 'env-set' : 'env-unset'}" title="${escapeAttr(provider.extra_headers_env)}: ${provider.extra_headers_set ? 'set' : 'NOT set'}"></span> ${escapeHtml(provider.extra_headers_env)}`
+        : '';
+    return `
+        <div class="skill-card provider-card">
+            <div class="skill-card-header">
+                <span class="skill-card-name">${escapeHtml(provider.name)}</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="provider-type-badge">${escapeHtml(provider.type)}</span>
+                    ${provider.is_default ? '<span class="provider-default-badge">Default</span>' : ''}
+                    <div class="skill-card-actions">
+                        <button class="btn btn-secondary provider-edit-btn" data-provider="${escapeAttr(provider.id)}" title="Edit">
+                            <i class="fas fa-pen"></i>
+                        </button>
+                        <button class="btn btn-danger provider-delete-btn" data-provider="${escapeAttr(provider.id)}" title="Delete">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="skill-card-desc">${escapeHtml(provider.base_url)}</div>
+            <div class="skill-card-meta">
+                <span>Model: ${escapeHtml(provider.default_model)}</span>
+                <span>API Key: ${apiKeyDot}</span>
+                ${headersDot ? `<span>Headers: ${headersDot}</span>` : ''}
+            </div>
+        </div>
+    `;
+}
+
+async function openProviderEditor(mode, providerId) {
+    providerEditorMode = mode;
+    providerEditorStatus.textContent = '';
+    providerEditorOverlay.hidden = false;
+
+    const idInput = document.getElementById('provider-editor-id');
+    const nameInput = document.getElementById('provider-editor-name');
+    const typeSelect = document.getElementById('provider-editor-type');
+    const baseUrlInput = document.getElementById('provider-editor-base-url');
+    const modelInput = document.getElementById('provider-editor-model');
+    const apiKeyEnvInput = document.getElementById('provider-editor-api-key-env');
+    const headersEnvInput = document.getElementById('provider-editor-headers-env');
+    const defaultCheckbox = document.getElementById('provider-editor-default');
+    const titleEl = document.getElementById('provider-editor-title');
+
+    if (mode === 'edit' && providerId) {
+        titleEl.textContent = 'Edit Provider';
+        providerEditorSaveBtn.textContent = 'Save';
+        try {
+            const res = await apiFetch(`${API_BASE}/providers/${encodeURIComponent(providerId)}`);
+            if (!res.ok) throw new Error('Failed to load provider');
+            const p = await res.json();
+            idInput.value = p.id;
+            idInput.disabled = true;
+            nameInput.value = p.name;
+            typeSelect.value = p.type;
+            baseUrlInput.value = p.base_url;
+            modelInput.value = p.default_model;
+            apiKeyEnvInput.value = p.api_key_env || '';
+            headersEnvInput.value = p.extra_headers_env || '';
+            defaultCheckbox.checked = p.is_default;
+        } catch (error) {
+            providerEditorStatus.textContent = error.message;
+            providerEditorStatus.className = 'form-status error';
+        }
+    } else {
+        titleEl.textContent = 'New Provider';
+        providerEditorSaveBtn.textContent = 'Create Provider';
+        idInput.value = '';
+        idInput.disabled = false;
+        nameInput.value = '';
+        typeSelect.value = 'ollama';
+        baseUrlInput.value = '';
+        modelInput.value = '';
+        apiKeyEnvInput.value = '';
+        headersEnvInput.value = '';
+        defaultCheckbox.checked = false;
+    }
+}
+
+function closeProviderEditor() {
+    providerEditorOverlay.hidden = true;
+}
+
+async function saveProvider() {
+    const idInput = document.getElementById('provider-editor-id');
+    const payload = {
+        id: idInput.value.trim(),
+        name: document.getElementById('provider-editor-name').value.trim(),
+        type: document.getElementById('provider-editor-type').value,
+        base_url: document.getElementById('provider-editor-base-url').value.trim(),
+        default_model: document.getElementById('provider-editor-model').value.trim(),
+        api_key_env: document.getElementById('provider-editor-api-key-env').value.trim() || null,
+        extra_headers_env: document.getElementById('provider-editor-headers-env').value.trim() || null,
+        is_default: document.getElementById('provider-editor-default').checked,
+    };
+
+    if (!payload.id || !payload.name || !payload.base_url || !payload.default_model) {
+        providerEditorStatus.textContent = 'ID, name, base URL, and model are required.';
+        providerEditorStatus.className = 'form-status error';
+        return;
+    }
+
+    try {
+        const url = providerEditorMode === 'edit'
+            ? `${API_BASE}/providers/${encodeURIComponent(payload.id)}`
+            : `${API_BASE}/providers`;
+        const method = providerEditorMode === 'edit' ? 'PUT' : 'POST';
+        const res = await apiFetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        closeProviderEditor();
+        loadProviders();
+    } catch (error) {
+        providerEditorStatus.textContent = error.message;
+        providerEditorStatus.className = 'form-status error';
+    }
+}
+
+async function deleteProvider(providerId) {
+    if (!confirm(`Delete provider "${providerId}"?`)) return;
+    try {
+        const res = await apiFetch(`${API_BASE}/providers/${encodeURIComponent(providerId)}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        loadProviders();
+    } catch (error) {
+        alert(`Failed to delete: ${error.message}`);
+    }
+}
+
+async function populateProviderDropdown(selectId, currentValue) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    try {
+        const res = await apiFetch(`${API_BASE}/providers`);
+        if (!res.ok) return;
+        const providers = await res.json();
+        select.innerHTML = '<option value="">(use default provider)</option>';
+        for (const p of providers) {
+            const label = `${p.name} (${p.type} — ${p.default_model})${p.is_default ? ' [default]' : ''}`;
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = label;
+            if (p.id === currentValue) opt.selected = true;
+            select.appendChild(opt);
+        }
+        // Update model placeholder based on selected provider
+        const updateModelPlaceholder = () => {
+            const modelInput = document.getElementById('edit-model');
+            if (!modelInput) return;
+            const selected = providers.find(p => p.id === select.value);
+            modelInput.placeholder = selected ? `default: ${selected.default_model}` : 'e.g. gpt-4o, qwen3:14b';
+        };
+        select.addEventListener('change', updateModelPlaceholder);
+        updateModelPlaceholder();
+    } catch {
+        // leave as-is on error
+    }
+}
+
+if (refreshProvidersBtn) refreshProvidersBtn.addEventListener('click', loadProviders);
+if (createProviderBtn) createProviderBtn.addEventListener('click', () => openProviderEditor('create'));
+if (closeProviderEditorBtn) closeProviderEditorBtn.addEventListener('click', closeProviderEditor);
+if (providerEditorCancelBtn) providerEditorCancelBtn.addEventListener('click', closeProviderEditor);
+if (providerEditorSaveBtn) providerEditorSaveBtn.addEventListener('click', saveProvider);
+if (providerEditorOverlay) {
+    providerEditorOverlay.addEventListener('click', (e) => {
+        if (e.target === providerEditorOverlay) closeProviderEditor();
     });
 }
 

@@ -59,6 +59,9 @@ workspace/skills/*.bak
 workspace/agents/
 workspace/agent_templates/
 
+# Provider configs (per-user; auto-created from env vars on first startup)
+workspace/providers/
+
 # Temporary files
 *.tmp
 *.bak

@@ -42,6 +42,9 @@
             <button class="rail-btn" data-panel="skills" title="Skills" aria-label="Skills">
                 <i class="fas fa-book"></i>
             </button>
+            <button class="rail-btn" data-panel="providers" title="Providers" aria-label="Providers">
+                <i class="fas fa-server"></i>
+            </button>
             <div class="rail-spacer"></div>
 
             <div class="rail-status" id="connection-status" title="Disconnected">
@@ -138,6 +141,9 @@
                     <button class="workspace-tab" data-tab="skills">
                         <i class="fas fa-book"></i> Skills
                     </button>
+                    <button class="workspace-tab" data-tab="providers">
+                        <i class="fas fa-server"></i> Providers
+                    </button>
                 </div>
                 <button class="icon-action-btn" id="close-workspace-btn" title="Close" aria-label="Close">
                     <i class="fas fa-xmark"></i>
@@ -168,6 +174,14 @@
                         <button id="create-skill-btn" class="btn btn-primary"><i class="fas fa-plus"></i> New Skill</button>
                     </div>
                     <div id="skills-library-list"></div>
+                </div>
+
+                <div id="providers-tab" class="tab-content">
+                    <div class="skills-header">
+                        <button id="refresh-providers" class="btn btn-secondary">Refresh</button>
+                        <button id="create-provider-btn" class="btn btn-primary"><i class="fas fa-plus"></i> New Provider</button>
+                    </div>
+                    <div id="providers-list"></div>
                 </div>
 
             </div>
@@ -317,6 +331,65 @@
                     <button class="btn btn-primary" id="skill-editor-save-btn">Create Custom Tool</button>
                     <button class="btn btn-secondary" id="skill-editor-cancel-btn">Cancel</button>
                     <span class="form-status" id="skill-editor-status"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Provider editor modal -->
+    <div class="workspace-overlay" id="provider-editor-overlay" hidden>
+        <div class="workspace-modal" style="max-width:540px;">
+            <div class="workspace-modal-header">
+                <div class="workspace-tabs">
+                    <span class="knowledge-modal-title">
+                        <i class="fas fa-server"></i> <span id="provider-editor-title">New Provider</span>
+                    </span>
+                </div>
+                <button class="icon-action-btn" id="close-provider-editor-btn" title="Close" aria-label="Close">
+                    <i class="fas fa-xmark"></i>
+                </button>
+            </div>
+            <div class="workspace-modal-body">
+                <div class="form-group">
+                    <label class="form-label">ID (kebab-case, cannot change later)</label>
+                    <input class="form-control" id="provider-editor-id" type="text" placeholder="e.g. ollama-local">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Display Name</label>
+                    <input class="form-control" id="provider-editor-name" type="text" placeholder="e.g. Ollama Local">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Type</label>
+                    <select class="form-control" id="provider-editor-type">
+                        <option value="ollama">ollama</option>
+                        <option value="openai">openai</option>
+                        <option value="llamastack">llamastack</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Base URL</label>
+                    <input class="form-control" id="provider-editor-base-url" type="text" placeholder="e.g. http://localhost:11434/v1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Default Model</label>
+                    <input class="form-control" id="provider-editor-model" type="text" placeholder="e.g. qwen3:14b">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">API Key Env Var (leave blank if not needed)</label>
+                    <input class="form-control" id="provider-editor-api-key-env" type="text" placeholder="e.g. OPENAI_API_KEY">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Extra Headers Env Var (leave blank if not needed)</label>
+                    <input class="form-control" id="provider-editor-headers-env" type="text" placeholder="e.g. LLM_EXTRA_HEADERS">
+                </div>
+                <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="provider-editor-default">
+                    <label for="provider-editor-default" class="form-label" style="margin:0;">Set as default provider</label>
+                </div>
+                <div class="details-actions">
+                    <button class="btn btn-primary" id="provider-editor-save-btn">Create Provider</button>
+                    <button class="btn btn-secondary" id="provider-editor-cancel-btn">Cancel</button>
+                    <span class="form-status" id="provider-editor-status"></span>
                 </div>
             </div>
         </div>

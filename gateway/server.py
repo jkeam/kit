@@ -186,18 +186,25 @@ async def lifespan(app: FastAPI):
     api_key = os.environ.get("LLM_API_KEY")
     extra_headers_raw = os.environ.get("LLM_EXTRA_HEADERS")
     extra_headers = json.loads(extra_headers_raw) if extra_headers_raw else None
+    from runtime.providers import ProviderRegistry
+    provider_registry = ProviderRegistry()
+    provider_registry.ensure_default_provider()
     session_manager = SessionManager(
         llm_base_url=base_url,
         model=model,
         llm_provider=provider,
         llm_api_key=api_key,
         llm_extra_headers=extra_headers,
-        on_event=manager.broadcast
+        on_event=manager.broadcast,
+        provider_registry=provider_registry,
     )
     scheduler_task = asyncio.create_task(run_scheduler(session_manager, manager))
     dreamer_task = asyncio.create_task(run_dream_cycle(session_manager, manager))
+    providers = provider_registry.list_providers()
     print("✅ Gateway server started")
     print(f"🤖 LLM: {model} at {base_url} (provider={provider})")
+    if providers:
+        print(f"📦 {len(providers)} provider(s) configured: {', '.join(p.id for p in providers)}")
     print("⏰ Scheduler running (60s check interval)")
     print("💤 Dream cycle running (cron: {})".format(os.environ.get("DREAM_CRON", "0 3 * * *")))
     print("📡 Ready to handle multi-platform requests")
@@ -770,6 +777,130 @@ async def delete_agent_template(template_id: str):
     return {"message": f"Template '{template_id}' deleted"}
 
 
+# --- Provider routes ---
+
+from runtime.providers import ProviderConfig
+
+
+class ProviderOut(BaseModel):
+    id: str
+    name: str
+    type: str
+    base_url: str
+    default_model: str
+    api_key_env: Optional[str] = None
+    extra_headers_env: Optional[str] = None
+    is_default: bool = False
+    api_key_set: bool = False
+    extra_headers_set: bool = False
+
+    @staticmethod
+    def from_config(config: ProviderConfig, registry) -> "ProviderOut":
+        status = registry.env_var_status(config)
+        return ProviderOut(
+            id=config.id,
+            name=config.name,
+            type=config.type,
+            base_url=config.base_url,
+            default_model=config.default_model,
+            api_key_env=config.api_key_env,
+            extra_headers_env=config.extra_headers_env,
+            is_default=config.is_default,
+            api_key_set=status["api_key_set"],
+            extra_headers_set=status["extra_headers_set"],
+        )
+
+
+class CreateProviderRequest(BaseModel):
+    id: str
+    name: str
+    type: str
+    base_url: str
+    default_model: str
+    api_key_env: Optional[str] = None
+    extra_headers_env: Optional[str] = None
+    is_default: bool = False
+
+
+class UpdateProviderRequest(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    base_url: Optional[str] = None
+    default_model: Optional[str] = None
+    api_key_env: Optional[str] = None
+    extra_headers_env: Optional[str] = None
+    is_default: Optional[bool] = None
+
+
+@app.get("/providers", response_model=List[ProviderOut], dependencies=[Depends(_require_gateway_token)])
+async def list_providers():
+    sm = _require_session_manager()
+    reg = sm.provider_registry
+    return [ProviderOut.from_config(p, reg) for p in reg.list_providers()]
+
+
+@app.post("/providers", response_model=ProviderOut, dependencies=[Depends(_require_gateway_token)])
+async def create_provider(request: CreateProviderRequest):
+    sm = _require_session_manager()
+    reg = sm.provider_registry
+    try:
+        config = reg.create_provider(
+            id=request.id,
+            name=request.name,
+            type=request.type,
+            base_url=request.base_url,
+            default_model=request.default_model,
+            api_key_env=request.api_key_env,
+            extra_headers_env=request.extra_headers_env,
+            is_default=request.is_default,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return ProviderOut.from_config(config, reg)
+
+
+@app.get("/providers/{provider_id}", response_model=ProviderOut, dependencies=[Depends(_require_gateway_token)])
+async def get_provider(provider_id: str):
+    sm = _require_session_manager()
+    reg = sm.provider_registry
+    config = reg.resolve(provider_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
+    return ProviderOut.from_config(config, reg)
+
+
+@app.put("/providers/{provider_id}", response_model=ProviderOut, dependencies=[Depends(_require_gateway_token)])
+async def update_provider(provider_id: str, request: UpdateProviderRequest):
+    sm = _require_session_manager()
+    reg = sm.provider_registry
+    try:
+        config = reg.update_provider(
+            provider_id,
+            name=request.name,
+            type=request.type,
+            base_url=request.base_url,
+            default_model=request.default_model,
+            api_key_env=request.api_key_env,
+            extra_headers_env=request.extra_headers_env,
+            is_default=request.is_default,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    sm.evict_sessions_for_provider(provider_id)
+    return ProviderOut.from_config(config, reg)
+
+
+@app.delete("/providers/{provider_id}", dependencies=[Depends(_require_gateway_token)])
+async def delete_provider(provider_id: str):
+    sm = _require_session_manager()
+    reg = sm.provider_registry
+    existed = reg.delete_provider(provider_id)
+    if not existed:
+        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
+    sm.evict_sessions_for_provider(provider_id)
+    return {"message": f"Provider '{provider_id}' deleted"}
+
+
 # --- Per-agent knowledge routes ---
 
 from runtime.knowledge import KnowledgeManager
@@ -988,22 +1119,11 @@ async def _generate_broadcast_reactions(message: str, message_id: str, session_i
             f'Example: {{"kit": "\U0001f44d", "dev-1": "\U0001f525"}}'
         )
 
-        if session_manager.llm_provider in OPENAI_COMPATIBLE_PROVIDERS:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(
-                base_url=session_manager.llm_base_url,
-                api_key=session_manager.llm_api_key or "not-needed",
-                default_headers=session_manager.llm_extra_headers,
-            )
-        else:
-            from llama_stack_client import AsyncLlamaStackClient
-            client = AsyncLlamaStackClient(
-                base_url=session_manager.llm_base_url,
-                default_headers=session_manager.llm_extra_headers,
-            )
+        kit_defn = session_manager.agent_registry.resolve("kit")
+        client, model, _ = session_manager.create_client_for_agent(kit_defn)
 
         response = await client.chat.completions.create(
-            model=session_manager.model,
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             stream=False,
         )
@@ -1064,22 +1184,7 @@ async def _generate_broadcast_replies(message: str, session_id: str):
                     "- Do NOT manage, delegate, or organize unless your role "
                     "is specifically a manager."
                 )
-                provider = agent_defn.provider or session_manager.llm_provider
-                model = agent_defn.model or session_manager.model
-
-                if provider in OPENAI_COMPATIBLE_PROVIDERS:
-                    from openai import AsyncOpenAI
-                    client = AsyncOpenAI(
-                        base_url=session_manager.llm_base_url,
-                        api_key=session_manager.llm_api_key or "not-needed",
-                        default_headers=session_manager.llm_extra_headers,
-                    )
-                else:
-                    from llama_stack_client import AsyncLlamaStackClient
-                    client = AsyncLlamaStackClient(
-                        base_url=session_manager.llm_base_url,
-                        default_headers=session_manager.llm_extra_headers,
-                    )
+                client, model, _ = session_manager.create_client_for_agent(agent_defn)
 
                 response = await client.chat.completions.create(
                     model=model,
