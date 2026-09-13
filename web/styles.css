@@ -804,6 +804,70 @@ button.chat-header-menu {
     gap: 8px;
     padding: 12px 18px 16px;
     border-top: 1px solid var(--border);
+    position: relative;
+}
+
+/* @ Mention dropdown */
+
+.mention-dropdown {
+    position: absolute;
+    bottom: 100%;
+    left: 12px;
+    right: 12px;
+    max-height: 240px;
+    overflow-y: auto;
+    background: var(--main-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+    margin-bottom: 4px;
+    z-index: 50;
+    padding: 4px 0;
+}
+
+.mention-dropdown[hidden] {
+    display: none;
+}
+
+.mention-dropdown-header {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    padding: 6px 12px 4px;
+}
+
+.mention-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: 14px;
+    border-radius: 0;
+}
+
+.mention-item:hover,
+.mention-item.active {
+    background: var(--panel-bg);
+}
+
+.mention-item .avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 10px;
+    border-radius: 6px;
+}
+
+.mention-item-name {
+    font-weight: 600;
+}
+
+.mention-item-role {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-left: auto;
 }
 
 .composer-input {

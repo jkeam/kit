@@ -124,6 +124,7 @@ class BroadcastRequest(BaseModel):
     platform: str
     user_id: str
     message: str
+    target_agent_ids: Optional[List[str]] = None
 
 
 class ChatResponse(BaseModel):
@@ -440,8 +441,14 @@ async def broadcast_message(request: BroadcastRequest):
         "timestamp": _now(),
     })
 
-    asyncio.create_task(_generate_broadcast_reactions(request.message, msg_id, session_id))
-    asyncio.create_task(_generate_broadcast_replies(request.message, session_id))
+    if request.target_agent_ids:
+        asyncio.create_task(_generate_targeted_broadcast_stream(
+            request.message, session_id, request.target_agent_ids,
+            msg_id, request.platform, request.user_id,
+        ))
+    else:
+        asyncio.create_task(_generate_broadcast_reactions(request.message, msg_id, session_id))
+        asyncio.create_task(_generate_broadcast_replies(request.message, session_id))
 
     return {"status": "ok", "session_id": session_id}
 
@@ -1098,10 +1105,81 @@ async def delete_skill(name: str):
     return {"message": result}
 
 
-async def _generate_broadcast_reactions(message: str, message_id: str, session_id: str):
+def _format_broadcast_context(session_id: str, exclude_message_id: Optional[str] = None) -> str:
+    """Format recent broadcast history as a text block for agent context."""
+    messages = session_manager.get_messages(session_id)
+    lines = []
+    for msg in messages:
+        if msg.get("role") in ("reactions", "user_reactions"):
+            continue
+        if exclude_message_id and msg.get("message_id") == exclude_message_id:
+            continue
+        if msg["role"] == "user":
+            lines.append(f"User: {msg['content']}")
+        elif msg["role"] == "assistant":
+            aid = msg.get("agent_id", "kit")
+            defn = session_manager.agent_registry.resolve(aid)
+            name = defn.name if defn else aid
+            lines.append(f"{name}: {msg['content']}")
+    if not lines:
+        return ""
+    return "\n".join(lines[-30:])
+
+
+async def _generate_targeted_broadcast_stream(
+    message: str, session_id: str, target_agent_ids: List[str],
+    msg_id: str, platform: str, user_id: str,
+):
+    """Use the full agent pipeline (tools, knowledge, streaming) for
+    @-targeted broadcast replies.  Each targeted agent gets broadcast
+    history as context and can use all of its tools."""
+    context = _format_broadcast_context(session_id, exclude_message_id=msg_id)
+
+    for agent_id in target_agent_ids:
+        try:
+            session = session_manager.get_session(platform, user_id, agent_id)
+            augmented = message
+            if context:
+                augmented = (
+                    f"[Recent team chat history — all team members can see this]\n"
+                    f"{context}\n\n"
+                    f"[New message directed at you in team chat]\n"
+                    f"{message}"
+                )
+
+            full_text = ""
+            async for event in session_manager._run_and_track(session, augmented):
+                await manager.broadcast({
+                    **event,
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "timestamp": _now(),
+                })
+                if event["type"] == "stream_end":
+                    full_text = event.get("content", "")
+
+            if full_text:
+                session_manager.save_message(
+                    session_id, "assistant", full_text, agent_id=agent_id,
+                )
+        except Exception as e:
+            print(f"Warning: Targeted broadcast to {agent_id} failed: {e}")
+            await manager.broadcast({
+                "type": "stream_error",
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "error": str(e),
+                "timestamp": _now(),
+            })
+
+
+async def _generate_broadcast_reactions(message: str, message_id: str, session_id: str, target_agent_ids: Optional[List[str]] = None):
     """Ask the LLM to pick one emoji per team member, then broadcast them."""
     try:
         agents = session_manager.agent_registry.list_agents()
+        if target_agent_ids:
+            target_set = set(target_agent_ids)
+            agents = [a for a in agents if a.id in target_set]
         if not agents:
             return
 
@@ -1160,16 +1238,27 @@ async def _generate_broadcast_reactions(message: str, message_id: str, session_i
         print(f"Warning: Failed to generate broadcast reactions: {e}")
 
 
-async def _generate_broadcast_replies(message: str, session_id: str):
-    """Have every agent reply to a broadcast message (no tools, just chat)."""
+async def _generate_broadcast_replies(message: str, session_id: str, target_agent_ids: Optional[List[str]] = None):
+    """Have every agent reply to a broadcast message with team chat context."""
     try:
         agents = session_manager.agent_registry.list_agents()
+        if target_agent_ids:
+            target_set = set(target_agent_ids)
+            agents = [a for a in agents if a.id in target_set]
         if not agents:
             return
+
+        context = _format_broadcast_context(session_id)
 
         async def _reply(agent_defn):
             try:
                 soul = agent_defn.soul or "You are a helpful team member."
+                history_block = ""
+                if context:
+                    history_block = (
+                        "\n\nRecent team chat history (all members can see this):\n"
+                        f"{context}\n"
+                    )
                 system = (
                     f"Your name is {agent_defn.name}. "
                     f"Your role on the team: {agent_defn.description}\n\n"
@@ -1183,6 +1272,7 @@ async def _generate_broadcast_replies(message: str, session_id: str):
                     "helpful-assistant answers.\n"
                     "- Do NOT manage, delegate, or organize unless your role "
                     "is specifically a manager."
+                    f"{history_block}"
                 )
                 client, model, _ = session_manager.create_client_for_agent(agent_defn)
 
@@ -1367,6 +1457,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     user_id = message.get("user_id", "anonymous")
                     user_msg = message.get("message", "")
                     msg_id = message.get("message_id", str(uuid.uuid4()))
+                    target_agent_ids = message.get("target_agent_ids")
                     session_id = _broadcast_session_id(platform, user_id)
 
                     if not check_rate_limit(f"broadcast:{platform}:{user_id}"):
@@ -1389,8 +1480,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         "timestamp": _now(),
                     })
 
-                    asyncio.create_task(_generate_broadcast_reactions(user_msg, msg_id, session_id))
-                    asyncio.create_task(_generate_broadcast_replies(user_msg, session_id))
+                    if target_agent_ids:
+                        asyncio.create_task(_generate_targeted_broadcast_stream(
+                            user_msg, session_id, target_agent_ids, msg_id, platform, user_id,
+                        ))
+                    else:
+                        asyncio.create_task(_generate_broadcast_reactions(user_msg, msg_id, session_id))
+                        asyncio.create_task(_generate_broadcast_replies(user_msg, session_id))
 
             except json.JSONDecodeError:
                 await websocket.send_json({

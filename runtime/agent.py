@@ -52,6 +52,12 @@ MAX_DELEGATION_DEPTH = 3
 OPENAI_COMPATIBLE_PROVIDERS = {"ollama", "openai"}
 
 
+def _is_bad_request(exc: Exception) -> bool:
+    """True if the exception is an HTTP 400 Bad Request from the LLM provider."""
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    return status == 400
+
+
 class PersonalAssistant:
     """Personal AI Assistant with memory and tool execution."""
 
@@ -576,15 +582,27 @@ class PersonalAssistant:
                 yield {"type": "mcp_notice", "content": notice}
 
             all_content_parts: list[str] = []
+            tools_for_llm = self._filtered_tools or None
 
             for _round in range(MAX_TOOL_ROUNDS):
                 self._trim_context(messages, self._filtered_tools, context_limit)
-                stream = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    tools=self._filtered_tools,
-                    stream=True,
-                )
+                try:
+                    stream = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        tools=tools_for_llm,
+                        stream=True,
+                    )
+                except Exception as _tool_err:
+                    if tools_for_llm is not None and _is_bad_request(_tool_err):
+                        tools_for_llm = None
+                        stream = await self.client.chat.completions.create(
+                            model=self.model,
+                            messages=messages,
+                            stream=True,
+                        )
+                    else:
+                        raise
 
                 content_parts: list[str] = []
                 tool_calls_acc: dict[int, dict] = {}

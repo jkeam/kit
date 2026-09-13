@@ -501,10 +501,13 @@ function showEmojiPicker(messageDiv, anchorBtn) {
     activeEmojiPicker = picker;
 }
 
-document.addEventListener('click', () => {
+document.addEventListener('click', (e) => {
     if (activeEmojiPicker) {
         activeEmojiPicker.remove();
         activeEmojiPicker = null;
+    }
+    if (mentionActive && !chatInput.contains(e.target) && !mentionDropdown.contains(e.target)) {
+        closeMentionDropdown();
     }
 });
 
@@ -605,31 +608,45 @@ async function sendMessage() {
     if (currentMode === 'broadcast') {
         const messageId = crypto.randomUUID();
         msgDiv.dataset.messageId = messageId;
+        const targetAgentIds = extractMentionedAgentIds(message);
 
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
+            const payload = {
                 type: 'broadcast',
                 platform: PLATFORM,
                 user_id: USER_ID,
                 message: message,
                 message_id: messageId,
-            }));
+            };
+            if (targetAgentIds.length > 0) {
+                payload.target_agent_ids = targetAgentIds;
+            }
+            ws.send(JSON.stringify(payload));
         } else {
             try {
+                const body = { platform: PLATFORM, user_id: USER_ID, message: message };
+                if (targetAgentIds.length > 0) {
+                    body.target_agent_ids = targetAgentIds;
+                }
                 await apiFetch(`${API_BASE}/broadcast`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ platform: PLATFORM, user_id: USER_ID, message: message }),
+                    body: JSON.stringify(body),
                 });
             } catch (error) {
                 addMessage(`Error: ${error.message}`, 'system');
             }
         }
-        messageCount++;
-        messageCountSpan.textContent = `${messageCount} messages`;
-        chatInput.disabled = false;
-        sendButton.disabled = false;
-        chatInput.focus();
+        if (targetAgentIds.length > 0) {
+            addThinkingIndicator();
+            startStreamTimeout();
+        } else {
+            messageCount++;
+            messageCountSpan.textContent = `${messageCount} messages`;
+            chatInput.disabled = false;
+            sendButton.disabled = false;
+            chatInput.focus();
+        }
         return;
     }
 
@@ -723,6 +740,7 @@ async function selectMember(agentId, skipPush = false) {
     currentMode = 'dm';
     currentAgentId = agentId;
     if (!skipPush) pushChatUrl();
+    closeMentionDropdown();
     resetStreamingState();
     removeThinkingIndicator();
     updateChatHeaderForCurrentAgent();
@@ -739,6 +757,7 @@ async function selectMember(agentId, skipPush = false) {
 async function selectBroadcastChannel(skipPush = false) {
     currentMode = 'broadcast';
     if (!skipPush) pushChatUrl();
+    closeMentionDropdown();
     resetStreamingState();
     removeThinkingIndicator();
     refreshMemberListVisualState();
@@ -750,7 +769,7 @@ async function selectBroadcastChannel(skipPush = false) {
     chatAvatar.style.background = '#5e40be';
     chatHeaderName.textContent = 'team';
     chatHeaderName.title = broadcastSessionId();
-    chatInput.placeholder = 'Broadcast to team…';
+    chatInput.placeholder = 'Broadcast to team… (use @ to mention someone)';
     chatTargetStatusDot.classList.remove('idle', 'busy');
     chatTargetStatusDot.style.display = 'none';
     chatHeaderStatusText.textContent = '';
@@ -780,20 +799,162 @@ function resetStreamingState() {
     sendButton.disabled = false;
 }
 
+// --- @ Mention autocomplete (broadcast channel only) ---
+
+const mentionDropdown = document.getElementById('mention-dropdown');
+let mentionActive = false;
+let mentionStartIdx = -1;
+let mentionSelectedIdx = 0;
+let mentionFilteredAgents = [];
+
+function handleMentionInput() {
+    if (currentMode !== 'broadcast') {
+        closeMentionDropdown();
+        return;
+    }
+
+    const val = chatInput.value;
+    const cursorPos = chatInput.selectionStart;
+    const beforeCursor = val.slice(0, cursorPos);
+    const atIdx = beforeCursor.lastIndexOf('@');
+
+    if (atIdx === -1 || (atIdx > 0 && !/[\s\n]/.test(beforeCursor[atIdx - 1]))) {
+        closeMentionDropdown();
+        return;
+    }
+
+    const query = beforeCursor.slice(atIdx + 1);
+    if (/[\s\n]/.test(query)) {
+        closeMentionDropdown();
+        return;
+    }
+
+    mentionStartIdx = atIdx;
+    const lower = query.toLowerCase();
+
+    mentionFilteredAgents = agentsCache.filter(a =>
+        a.name.toLowerCase().includes(lower) || a.id.toLowerCase().includes(lower)
+    );
+
+    if (mentionFilteredAgents.length === 0) {
+        closeMentionDropdown();
+        return;
+    }
+
+    mentionSelectedIdx = 0;
+    renderMentionDropdown();
+}
+
+function renderMentionDropdown() {
+    mentionDropdown.hidden = false;
+    mentionActive = true;
+
+    mentionDropdown.innerHTML =
+        '<div class="mention-dropdown-header">Team members</div>' +
+        mentionFilteredAgents.map((agent, i) => {
+            const bg = avatarColorFor(agent.id);
+            const role = roleLabelFor(agent.id);
+            return `
+                <div class="mention-item${i === mentionSelectedIdx ? ' active' : ''}" data-idx="${i}">
+                    <div class="avatar" style="background:${bg}">${initialsFor(agent.name)}</div>
+                    <span class="mention-item-name">${escapeHtml(agent.name)}</span>
+                    ${role ? `<span class="mention-item-role">${escapeHtml(role)}</span>` : ''}
+                </div>
+            `;
+        }).join('');
+
+    mentionDropdown.querySelectorAll('.mention-item').forEach(item => {
+        item.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            selectMentionItem(parseInt(item.dataset.idx));
+        });
+        item.addEventListener('mouseenter', () => {
+            mentionSelectedIdx = parseInt(item.dataset.idx);
+            updateMentionSelection();
+        });
+    });
+}
+
+function updateMentionSelection() {
+    mentionDropdown.querySelectorAll('.mention-item').forEach((item, i) => {
+        item.classList.toggle('active', i === mentionSelectedIdx);
+    });
+    const active = mentionDropdown.querySelector('.mention-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+}
+
+function selectMentionItem(idx) {
+    const agent = mentionFilteredAgents[idx];
+    if (!agent) return;
+
+    const val = chatInput.value;
+    const before = val.slice(0, mentionStartIdx);
+    const after = val.slice(chatInput.selectionStart);
+
+    chatInput.value = `${before}@${agent.name} ${after}`;
+    const newPos = before.length + 1 + agent.name.length + 1;
+    chatInput.selectionStart = chatInput.selectionEnd = newPos;
+    chatInput.style.height = 'auto';
+    chatInput.style.height = `${chatInput.scrollHeight}px`;
+
+    closeMentionDropdown();
+    chatInput.focus();
+}
+
+function closeMentionDropdown() {
+    mentionDropdown.hidden = true;
+    mentionActive = false;
+    mentionStartIdx = -1;
+    mentionFilteredAgents = [];
+}
+
+function extractMentionedAgentIds(text) {
+    const ids = [];
+    for (const agent of agentsCache) {
+        const pattern = `@${agent.name}`;
+        if (text.includes(pattern)) {
+            ids.push(agent.id);
+        }
+    }
+    return ids;
+}
+
 // Event listeners
 sendButton.addEventListener('click', sendMessage);
 
 chatInput.addEventListener('keydown', (e) => {
+    if (mentionActive) {
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            mentionSelectedIdx = (mentionSelectedIdx + 1) % mentionFilteredAgents.length;
+            updateMentionSelection();
+            return;
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            mentionSelectedIdx = (mentionSelectedIdx - 1 + mentionFilteredAgents.length) % mentionFilteredAgents.length;
+            updateMentionSelection();
+            return;
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+            e.preventDefault();
+            selectMentionItem(mentionSelectedIdx);
+            return;
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            closeMentionDropdown();
+            return;
+        }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
     }
 });
 
-// Autogrow the composer textarea up to the CSS max-height.
+// Autogrow the composer textarea up to the CSS max-height, and handle @ mentions.
 chatInput.addEventListener('input', () => {
     chatInput.style.height = 'auto';
     chatInput.style.height = `${chatInput.scrollHeight}px`;
+    handleMentionInput();
 });
 
 // --- Member sidebar: contacts-style roster of team members ---
@@ -3127,8 +3288,9 @@ function handleWebSocketMessage(data) {
                 removeThinkingIndicator();
                 streamingText = '';
 
-                const agent = agentsById[currentAgentId];
-                const name = agent ? agent.name : (currentAgentId === KIT_AGENT_ID ? 'Kit' : currentAgentId);
+                const streamAgentId = data.agent_id || currentAgentId;
+                const agent = agentsById[streamAgentId];
+                const name = agent ? agent.name : (streamAgentId === KIT_AGENT_ID ? 'Kit' : streamAgentId);
 
                 streamingMessageDiv = document.createElement('div');
                 streamingMessageDiv.className = 'message assistant streaming';
@@ -3136,7 +3298,7 @@ function handleWebSocketMessage(data) {
 
                 const avatarDiv = document.createElement('div');
                 avatarDiv.className = 'avatar';
-                avatarDiv.style.background = avatarColorFor(currentAgentId);
+                avatarDiv.style.background = avatarColorFor(streamAgentId);
                 avatarDiv.textContent = initialsFor(name);
 
                 const bodyDiv = document.createElement('div');
