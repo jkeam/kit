@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kit-config
+data:
+  LLM_PROVIDER: "openai"
+  LLM_BASE_URL: "http://llm-service:8000/v1"
+  LLM_MODEL: "qwen3-14b"
+  CORS_ORIGINS: "*"
+  RATE_LIMIT_MAX_REQUESTS: "30"
+  RATE_LIMIT_WINDOW_SECONDS: "60"
+  MAX_CONTEXT_TOKENS: "120000"
+  MAX_TOOL_RESULT_CHARS: "8000"

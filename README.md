@@ -79,6 +79,61 @@ python -m gateway.server
 Open browser: http://localhost:18789
 ```
 
+## ☁️ Deploy on OpenShift
+
+### Prerequisites
+- An OpenShift cluster (4.x+)
+- `oc` CLI logged in
+- A container registry accessible from the cluster
+- An LLM service endpoint (vLLM, Ollama, OpenCode Zen, etc.)
+
+### 1. Build and push the image
+
+```bash
+# Build (uses CPU-only PyTorch — no NVIDIA deps needed)
+podman build -f Containerfile -t quay.io/<your-org>/kit:latest .
+podman push quay.io/<your-org>/kit:latest
+```
+
+### 2. Configure
+
+Edit the manifests in `deploy/openshift/` before applying:
+
+```bash
+# Set your LLM endpoint and model
+vi deploy/openshift/configmap.yaml
+
+# Set your GATEWAY_TOKEN and any API keys
+vi deploy/openshift/secret.yaml
+
+# Update the image reference
+vi deploy/openshift/deployment.yaml  # change "image: kit:latest"
+```
+
+### 3. Deploy
+
+```bash
+oc apply -k deploy/openshift/
+```
+
+This creates a `kit` namespace with: Deployment, Service, TLS Route, PVC (1Gi for workspace), ConfigMap, and Secret.
+
+### 4. Access
+
+```bash
+oc get route -n kit kit -o jsonpath='{.spec.host}'
+```
+
+Open `https://<route-host>` in your browser. The first request will prompt for your gateway token.
+
+### Notes
+
+- The container runs as non-root (UID 1001) with OpenShift-compatible group permissions
+- Workspace data (memory, sessions, schedules, skills) persists on the PVC
+- Seed files (SOUL.md, AGENTS.md) are copied to the PVC on first boot and preserved across restarts
+- Browser automation tools (Playwright) are not available in the container
+- The `/health` endpoint is used for readiness, liveness, and startup probes
+
 ## 📖 Usage
 
 ### Web UI (Recommended)
