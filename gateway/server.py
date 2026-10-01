@@ -1307,7 +1307,7 @@ async def _generate_broadcast_replies(message: str, session_id: str, target_agen
         order = list(agents)
         random.shuffle(order)
         for agent_defn in order:
-            await asyncio.sleep(random.uniform(1.0, 3.0))
+            await asyncio.sleep(random.uniform(0.2, 1.0))
             await _reply(agent_defn)
     except Exception as e:
         print(f"Warning: Failed to generate broadcast replies: {e}")
