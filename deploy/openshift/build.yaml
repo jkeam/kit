@@ -14,5 +14,8 @@ spec:
   paramValues:
     - name: dockerfile
       value: Containerfile
+    - name: registries-insecure
+      values:
+        - value: image-registry.openshift-image-registry.svc:5000
   output:
     image: image-registry.openshift-image-registry.svc:5000/kit/kit:latest
