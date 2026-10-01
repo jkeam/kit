@@ -14,6 +14,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - route.yaml
+  - console-link.yaml
 
 labels:
   - pairs:

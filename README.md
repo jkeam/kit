@@ -85,7 +85,7 @@ Open browser: http://localhost:18789
 - An OpenShift cluster (4.x+)
 - `oc` CLI logged in
 - An LLM service endpoint (vLLM, Ollama, OpenCode Zen, etc.)
-- For Shipwright builds: the [Shipwright operator](https://shipwright.io) installed on the cluster
+- For Shipwright builds: the [Shipwright operator](https://shipwright.io) installed on the cluster, OpenShift instructions [here](https://docs.redhat.com/en/documentation/builds_for_red_hat_openshift/1.9/html/install/installing-openshift-builds)
 
 ### 1. Configure
 
@@ -97,6 +97,9 @@ vi deploy/openshift/configmap.yaml
 
 # Set your GATEWAY_TOKEN and any API keys
 vi deploy/openshift/secret.yaml
+
+# Set the console link URL to match your cluster
+vi deploy/openshift/console-link.yaml
 ```
 
 ### 2. Deploy
@@ -105,7 +108,7 @@ vi deploy/openshift/secret.yaml
 oc apply -k deploy/openshift/
 ```
 
-This creates a `kit` namespace with: Shipwright Build, Deployment, Service, TLS Route, PVC (1Gi for workspace), ConfigMap, and Secret.
+This creates a `kit` namespace with: Shipwright Build, Deployment, Service, TLS Route, PVC (1Gi for workspace), ConfigMap, Secret, and a ConsoleLink (adds Kit to the OpenShift application menu).
 
 ### 3. Build the image
 
