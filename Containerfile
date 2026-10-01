@@ -10,7 +10,8 @@ RUN pip install --no-cache-dir uv && \
     uv export --no-dev --frozen --no-hashes \
       | grep -v -E '^(nvidia-|cuda-|triton)' \
       > requirements.txt && \
-    uv pip install -r requirements.txt --torch-backend cpu
+    uv pip install -r requirements.txt --torch-backend cpu && \
+    uv pip install pysqlite3-binary
 
 ENV HF_HOME=/opt/app-root/hf-cache
 RUN python -c \

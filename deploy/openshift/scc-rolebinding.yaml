@@ -18,5 +18,5 @@ roleRef:
   name: kit-use-builder-scc
 subjects:
   - kind: ServiceAccount
-    name: kit-builder
+    name: builder
     namespace: kit

@@ -4,6 +4,13 @@ Embeddings Manager - Vector search over memory files.
 Uses ChromaDB for vector storage and sentence-transformers for embeddings.
 """
 
+try:
+    __import__('pysqlite3')
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError:
+    pass
+
 import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
