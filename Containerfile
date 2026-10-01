@@ -1,36 +1,33 @@
-FROM python:3.14-slim AS builder
+FROM registry.access.redhat.com/ubi9/python-314-minimal:9.8-1790838707 AS builder
 
-RUN pip install --no-cache-dir uv
-
-WORKDIR /build
+WORKDIR /opt/app-root/src
 COPY pyproject.toml uv.lock README.md ./
 COPY gateway/ gateway/
 COPY runtime/ runtime/
 COPY tools/ tools/
 
-RUN uv venv .venv && \
+RUN pip install --no-cache-dir uv && \
     uv export --no-dev --frozen --no-hashes \
       | grep -v -E '^(nvidia-|cuda-|triton)' \
       > requirements.txt && \
-    uv pip install --python .venv -r requirements.txt --torch-backend cpu
+    uv pip install -r requirements.txt --torch-backend cpu
 
-RUN .venv/bin/python -c \
+ENV HF_HOME=/opt/hf-cache
+RUN python -c \
     "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
-FROM python:3.14-slim
+FROM registry.access.redhat.com/ubi9/python-314-minimal:9.8-1790838707
 
-COPY --from=builder /build/.venv /opt/venv
-COPY --from=builder /root/.cache/huggingface /opt/hf-cache
+COPY --from=builder /opt/app-root /opt/app-root
+COPY --from=builder /opt/hf-cache /opt/hf-cache
 
-ENV PATH="/opt/venv/bin:$PATH" \
-    VIRTUAL_ENV=/opt/venv \
-    PYTHONDONTWRITEBYTECODE=1 \
+ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/opt/hf-cache \
     GATEWAY_HOST=0.0.0.0 \
     GATEWAY_PORT=18789
 
-WORKDIR /app
+WORKDIR /opt/app-root/src
 COPY gateway/ gateway/
 COPY runtime/ runtime/
 COPY tools/ tools/
@@ -39,13 +36,13 @@ COPY web/ web/
 COPY cli.py env_config.py config.yaml ./
 
 COPY workspace/SOUL.md workspace/AGENTS.md workspace/MEMORY.md.example \
-     workspace/USER.md.example /app/workspace-seed/
+     workspace/USER.md.example workspace-seed/
 
 RUN mkdir -p workspace/memory workspace/schedules workspace/skills \
              workspace/sessions workspace/agents workspace/providers \
              workspace/knowledge workspace/chroma workspace/tmp \
              workspace/agent_templates && \
-    chgrp -R 0 /app && chmod -R g=u /app && \
+    chgrp -R 0 /opt/app-root/src && chmod -R g=u /opt/app-root/src && \
     chgrp -R 0 /opt/hf-cache && chmod -R g=u /opt/hf-cache
 
 EXPOSE 18789

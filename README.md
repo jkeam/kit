@@ -84,18 +84,10 @@ Open browser: http://localhost:18789
 ### Prerequisites
 - An OpenShift cluster (4.x+)
 - `oc` CLI logged in
-- A container registry accessible from the cluster
 - An LLM service endpoint (vLLM, Ollama, OpenCode Zen, etc.)
+- For Shipwright builds: the [Shipwright operator](https://shipwright.io) installed on the cluster
 
-### 1. Build and push the image
-
-```bash
-# Build (uses CPU-only PyTorch — no NVIDIA deps needed)
-podman build -f Containerfile -t quay.io/<your-org>/kit:latest .
-podman push quay.io/<your-org>/kit:latest
-```
-
-### 2. Configure
+### 1. Configure
 
 Edit the manifests in `deploy/openshift/` before applying:
 
@@ -105,18 +97,49 @@ vi deploy/openshift/configmap.yaml
 
 # Set your GATEWAY_TOKEN and any API keys
 vi deploy/openshift/secret.yaml
-
-# Update the image reference
-vi deploy/openshift/deployment.yaml  # change "image: kit:latest"
 ```
 
-### 3. Deploy
+### 2. Deploy
 
 ```bash
 oc apply -k deploy/openshift/
 ```
 
-This creates a `kit` namespace with: Deployment, Service, TLS Route, PVC (1Gi for workspace), ConfigMap, and Secret.
+This creates a `kit` namespace with: Shipwright Build, Deployment, Service, TLS Route, PVC (1Gi for workspace), ConfigMap, and Secret.
+
+### 3. Build the image
+
+**Option A: Shipwright (recommended)**
+
+The manifests include a Shipwright `Build` that pulls from the Git repo and pushes to the internal OpenShift registry. Trigger a build run:
+
+```bash
+oc create -n kit -f deploy/openshift/buildrun.yaml
+```
+
+Watch progress:
+
+```bash
+oc -n kit get buildruns -w
+```
+
+If the Git repo is private, add a clone secret to `build.yaml`:
+
+```yaml
+spec:
+  source:
+    git:
+      cloneSecret: my-git-secret
+```
+
+**Option B: Manual build and push**
+
+```bash
+podman build -f Containerfile -t quay.io/<your-org>/kit:latest .
+podman push quay.io/<your-org>/kit:latest
+```
+
+If using an external registry, update the image in `deploy/openshift/deployment.yaml` to match.
 
 ### 4. Access
 
@@ -128,8 +151,9 @@ Open `https://<route-host>` in your browser. The first request will prompt for y
 
 ### Notes
 
-- The container runs as non-root (UID 1001) with OpenShift-compatible group permissions
-- Workspace data (memory, sessions, schedules, skills) persists on the PVC
+- The container uses the UBI9 Python 3.14 minimal base image
+- Runs as non-root (UID 1001) with OpenShift-compatible group permissions
+- Workspace data (memory, sessions, schedules, skills) persists on the PVC at `/opt/app-root/src/workspace`
 - Seed files (SOUL.md, AGENTS.md) are copied to the PVC on first boot and preserved across restarts
 - Browser automation tools (Playwright) are not available in the container
 - The `/health` endpoint is used for readiness, liveness, and startup probes

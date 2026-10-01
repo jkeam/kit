@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: kit
-          image: kit:latest
+          image: image-registry.openshift-image-registry.svc:5000/kit/kit:latest
           ports:
             - containerPort: 18789
               protocol: TCP
@@ -27,7 +27,7 @@ spec:
                 name: kit-secrets
           volumeMounts:
             - name: workspace
-              mountPath: /app/workspace
+              mountPath: /opt/app-root/src/workspace
           resources:
             requests:
               cpu: 250m

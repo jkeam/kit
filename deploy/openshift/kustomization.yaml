@@ -8,6 +8,7 @@ resources:
   - pvc.yaml
   - secret.yaml
   - configmap.yaml
+  - build.yaml
   - deployment.yaml
   - service.yaml
   - route.yaml

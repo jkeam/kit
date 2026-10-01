@@ -1,0 +1,18 @@
+apiVersion: shipwright.io/v1beta1
+kind: Build
+metadata:
+  name: kit
+spec:
+  source:
+    type: Git
+    git:
+      url: https://github.com/jkeam/kit
+    contextDir: .
+  strategy:
+    name: buildah
+    kind: ClusterBuildStrategy
+  paramValues:
+    - name: dockerfile
+      value: Containerfile
+  output:
+    image: image-registry.openshift-image-registry.svc:5000/kit/kit:latest
