@@ -12,18 +12,18 @@ RUN pip install --no-cache-dir uv && \
       > requirements.txt && \
     uv pip install -r requirements.txt --torch-backend cpu
 
-ENV HF_HOME=/opt/hf-cache
+ENV HF_HOME=/opt/app-root/hf-cache
 RUN python -c \
     "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 FROM registry.access.redhat.com/ubi9/python-314-minimal:9.8-1790838707
 
 COPY --from=builder /opt/app-root /opt/app-root
-COPY --from=builder /opt/hf-cache /opt/hf-cache
+COPY --from=builder /opt/app-root/hf-cache /opt/app-root/hf-cache
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HF_HOME=/opt/hf-cache \
+    HF_HOME=/opt/app-root/hf-cache \
     GATEWAY_HOST=0.0.0.0 \
     GATEWAY_PORT=18789
 
@@ -43,7 +43,7 @@ RUN mkdir -p workspace/memory workspace/schedules workspace/skills \
              workspace/knowledge workspace/chroma workspace/tmp \
              workspace/agent_templates && \
     chgrp -R 0 /opt/app-root/src && chmod -R g=u /opt/app-root/src && \
-    chgrp -R 0 /opt/hf-cache && chmod -R g=u /opt/hf-cache
+    chgrp -R 0 /opt/app-root/hf-cache && chmod -R g=u /opt/app-root/hf-cache
 
 EXPOSE 18789
 
