@@ -160,6 +160,11 @@ Open `https://<route-host>` in your browser. The first request will prompt for y
 - Seed files (SOUL.md, AGENTS.md) are copied to the PVC on first boot and preserved across restarts
 - Browser automation tools (Playwright) are not available in the container
 - The `/health` endpoint is used for readiness, liveness, and startup probes
+- **Provider config persistence**: On first startup, the app creates a `workspace/providers/default.json` file from the `LLM_*` env vars (ConfigMap/Secret). This file is saved on the PVC and **takes precedence over env vars on subsequent restarts**. If you change `LLM_MODEL`, `LLM_BASE_URL`, or `LLM_PROVIDER` in the ConfigMap, you must delete the cached provider config for the change to take effect:
+  ```bash
+  oc exec deployment/kit -- rm workspace/providers/default.json
+  oc rollout restart deployment/kit
+  ```
 
 ## 📖 Usage
 
