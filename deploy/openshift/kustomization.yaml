@@ -8,6 +8,7 @@ resources:
   - pvc.yaml
   - secret.yaml
   - serviceaccount.yaml
+  - scc.yaml
   - scc-rolebinding.yaml
   - configmap.yaml
   - build.yaml
