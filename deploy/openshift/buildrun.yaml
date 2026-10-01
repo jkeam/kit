@@ -6,3 +6,4 @@ metadata:
 spec:
   build:
     name: kit
+  serviceAccount: kit-builder
