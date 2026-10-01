@@ -38,6 +38,8 @@ COPY cli.py env_config.py config.yaml ./
 COPY workspace/SOUL.md workspace/AGENTS.md workspace/MEMORY.md.example \
      workspace/USER.md.example workspace-seed/
 
+USER 0
+
 RUN mkdir -p workspace/memory workspace/schedules workspace/skills \
              workspace/sessions workspace/agents workspace/providers \
              workspace/knowledge workspace/chroma workspace/tmp \
