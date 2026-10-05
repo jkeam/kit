@@ -172,8 +172,17 @@ def registry(tmp_path):
         "skills": [],
         "soul": "# Tester",
     }))
+    (templates / "lead.json").write_text(json.dumps({
+        "id": "lead",
+        "name": "Lead",
+        "description": "Can delegate.",
+        "tools": ["read", "agent_delegate"],
+        "skills": [],
+        "soul": "# Lead",
+    }))
     reg = AgentRegistry(workspace_dir=str(workspace), templates_dir=str(templates))
     reg.create_agent(template_id="tester", id="tester-1")
+    reg.create_agent(template_id="lead", id="lead-1")
     return reg
 
 
@@ -183,27 +192,32 @@ def session_manager(registry):
 
 
 @pytest.mark.asyncio
-async def test_kit_delegates_to_tester_and_gets_reply(session_manager):
-    # Pre-create tester-1's session so we can script its client before Kit's
-    # delegation call reaches it (SessionManager caches sessions by id, so
-    # the same agent instance/client gets reused).
+async def test_kit_cannot_delegate_in_plan_mode(session_manager):
+    kit = session_manager.get_session("web", "browser", "kit").agent
+    assert "agent_delegate" not in kit.allowed_tools
+    result = await kit._delegate({"agent_id": "tester-1", "task": "run tests"})
+    assert "not available to this agent" in result
+
+
+@pytest.mark.asyncio
+async def test_agent_with_delegate_tool_round_trip(session_manager):
     tester_session = session_manager.get_session("web", "browser", "tester-1")
     tester_session.agent.client = FakeClient([_text_round("All 12 tests passed.")])
 
-    kit_session = session_manager.get_session("web", "browser", "kit")
-    kit_session.agent.client = FakeClient([
+    lead_session = session_manager.get_session("web", "browser", "lead-1")
+    lead_session.agent.client = FakeClient([
         _tool_call_round("agent_delegate", {"agent_id": "tester-1", "task": "run the test suite"}),
         _text_round("The tester reports all 12 tests passed."),
     ])
 
-    reply = await kit_session.agent.chat("have the tester run the suite")
+    reply = await lead_session.agent.chat("have the tester run the suite")
 
     assert reply == "The tester reports all 12 tests passed."
 
     tester_messages = session_manager.get_messages(tester_session.session_id)
     delegated = [m for m in tester_messages if m["role"] == "user"]
     assert delegated[-1]["content"] == "run the test suite"
-    assert delegated[-1]["sender"] == "kit"
+    assert delegated[-1]["sender"] == "lead-1"
 
     tester_replies = [m for m in tester_messages if m["role"] == "assistant"]
     assert tester_replies[-1]["content"] == "All 12 tests passed."
@@ -220,11 +234,7 @@ async def test_delegation_to_agent_without_the_tool_still_only_that_agent_acts(s
 
 
 def test_kit_sees_teammates_in_its_system_prompt(session_manager):
-    """Regression test: Kit must actually be told who's on the team,
-    otherwise it has the agent_delegate tool but no valid agent_id to pass
-    it. The roster is resolved fresh from the registry (not cached at
-    construction), so an agent created after Kit's session already exists
-    still shows up."""
+    """Kit must see the roster so plan_present steps can use real agent_ids."""
     kit_session = session_manager.get_session("web", "browser", "kit")
     session_manager.get_session("web", "browser", "tester-1")  # created after Kit's session
 
@@ -232,6 +242,7 @@ def test_kit_sees_teammates_in_its_system_prompt(session_manager):
 
     assert "YOUR TEAM" in prompt
     assert "tester-1" in prompt
+    assert "plan_present" in prompt
 
 
 def test_agent_without_delegate_tool_sees_no_roster(session_manager):

@@ -101,21 +101,29 @@ uv run python cli.py "Hello Kit!"
 
 ## Talking to Kit
 
-Kit is the "chief of staff" -- it receives your messages, decides what to do, and coordinates its team to get the work done. You can talk to Kit naturally:
+Kit is the manager -- he receives your messages, inspects the workspace if needed, and presents a plan. Kit does not implement work himself.
 
 ```
 What files are in this project?
 ```
 
 ```
-Create a file called notes.txt with my meeting notes from today.
+Add dark mode to the web UI.
 ```
 
-```
-Search my memories for anything about the deployment last week.
-```
+Kit gathers just enough context to plan, then should call `plan_present`. Prefer the **pinned plan dock** (or **Plans** rail panel) to **Approve**, **Revise**, or **Reject**.
 
-Kit will use its tools directly for simple tasks, or delegate to a specialist agent when the task matches one of its team members.
+If Kit only *describes* a plan in chat (markdown table, no dock), use the **Approve / Edit / Reject** buttons under that message — they capture the draft into a real plan. After approve, ready steps run automatically.
+
+### Tracking and cancelling work
+
+- **Pinned plan dock** above the composer: stays visible while a plan is active (click the bar to collapse/expand).
+- **Plan** button in the chat header: focuses the dock (or opens the Plans panel).
+- **Plans panel** (checklist icon in the left rail): full plan view anytime.
+- **Continue**: runs ready plan steps directly (delegates to teammates in order, updates step status). Does not rely on Kit’s LLM calling tools — use this when orchestration looks stuck.
+- **Cancel work**: available while a plan is approved/running/blocked. Hard-stops the current LLM turn and any in-flight delegation, marks unfinished steps cancelled, and returns Kit to plan mode.
+
+If the request is too vague, Kit asks a clarifying question instead of guessing.
 
 ### Switching Agents
 
@@ -186,10 +194,22 @@ Kit and its agents have access to 17+ built-in tools, scoped per agent:
 | `skill_delete` | Delete a custom tool or skill |
 | `skill_info` | Get details about a custom tool or skill |
 
+### Planning & orchestration
+| Tool | Description |
+|------|-------------|
+| `plan_present` | Persist a pending work plan and show it (Kit; does not execute) |
+| `plan_get` | Show the current plan and which steps are ready |
+| `plan_approve` | Approve a pending plan → orchestrate mode |
+| `plan_revise` | Update a pending plan from your feedback |
+| `plan_reject` | Reject/abandon a plan → back to plan mode |
+| `plan_cancel` | Cancel an active plan and unfinished steps → plan mode |
+| `plan_step_update` | Mark a step running/done/failed/needs_clarification/cancelled |
+| `plan_complete` | Finish a plan when every step is done → plan mode |
+
 ### Delegation
 | Tool | Description |
 |------|-------------|
-| `agent_delegate` | Hand a task to another agent and wait for their reply |
+| `agent_delegate` | Hand a task to another agent and wait for their reply (Kit: orchestrate mode only) |
 
 ---
 
@@ -223,7 +243,7 @@ Search my memories for that thing about the API rate limits.
 
 ## The Team
 
-Kit manages a team of specialized agents. Each agent has its own persona, tool access, and conversation thread. Kit is the default agent -- it has full access to everything and coordinates the rest.
+Kit manages a team of specialized agents. Each agent has its own persona, tool access, and conversation thread. Kit is the default agent -- he plans, waits for your approval, then coordinates specialists. He never gets implementation tools.
 
 ### Viewing the Roster
 
@@ -382,15 +402,22 @@ When creating an agent, you can override the template defaults:
 
 ## Delegation
 
-Delegation is how Kit hands tasks to its team members. When Kit receives a request, it checks each teammate's description and delegates to the best match automatically.
+`agent_delegate` is how a manager (or any agent that has the tool) hands work to a teammate. Kit only gets this tool in **orchestrate** mode, after you approve a plan.
 
-### How It Works
+### Typical Kit flow
 
-1. You send a message to Kit
-2. Kit's system prompt includes a "YOUR TEAM" section listing all agents and their descriptions
-3. Kit calls `agent_delegate(agent_id, task)` to hand the task to the right agent
-4. The target agent works in its own persistent thread for this user
-5. The agent's reply comes back to Kit, which presents it to you
+1. You ask Kit for something
+2. Kit calls `plan_present` and stops
+3. You approve → Kit calls `plan_approve` (mode → orchestrate)
+4. Kit `agent_delegate`s each ready step in order, with `plan_step_update` after each
+5. If a teammate is confused, Kit asks you, then re-delegates
+6. When every step is done, Kit calls `plan_complete` (mode → plan)
+
+### How `agent_delegate` works
+
+1. An agent with the tool calls `agent_delegate(agent_id, task)`
+2. The target agent works in its own persistent thread for this user
+3. The agent's reply comes back to the caller
 
 ### Direct Delegation
 
@@ -821,7 +848,7 @@ The SentenceTransformer embedding model downloads on first run (~90MB). Subseque
 
 1. Verify agents exist: `curl http://localhost:18789/agents`
 2. Check that Kit's system prompt includes the "YOUR TEAM" section (it's built dynamically from the agent registry)
-3. Make sure the target agent's `tools` list doesn't include `agent_delegate` unless you want sub-delegation -- only Kit needs it by default
+3. Kit only has `agent_delegate` after you approve a plan (orchestrate mode). In plan mode he can only present/revise plans.
 4. Check delegation depth: chains deeper than 3 levels are refused
 
 ### Browser tools fail

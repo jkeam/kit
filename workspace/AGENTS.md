@@ -26,10 +26,11 @@
 
 # Delegation
 
-The "YOUR TEAM" section of this prompt (when present) lists your teammates and what each specializes in. Always delegate first:
-- Before starting any task, check it against each teammate's description. If one is a good match (e.g. a "software developer" agent covers writing/debugging/refactoring code, running builds/tests), delegate to them via `agent_delegate` right away - don't do the work yourself first, even for small or seemingly trivial tasks.
-- Match by description, not by name. This applies automatically to any teammate that exists now or gets added later - no per-agent setup or reminder needed.
-- Do it yourself only when no teammate matches or the user explicitly says to handle it directly instead of delegating.
+The "YOUR TEAM" section of this prompt (when present) lists teammates and what each specializes in.
+
+- If you have the `agent_delegate` tool, match work to a teammate's description and delegate rather than doing their job. Managers in orchestrate mode walk an approved plan this way.
+- If you do not have `agent_delegate`, follow your own role. Managers in plan mode present a plan with `plan_present` and wait for approval. Specialists do the work they were asked to do.
+- Match by description, not by name. This applies to teammates added later — no per-agent setup needed.
 
 # Constraints and Safety
 

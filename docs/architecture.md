@@ -71,6 +71,7 @@ graph TB
         Browser["Browser: navigate, screenshot, extract"]
         SchedTools["Scheduler: create, list, delete"]
         Deleg["Delegation: agent_delegate"]
+        PlanTools["Plan: plan_present"]
         SkillTools["Skills: create, execute, improve, delete, list, info"]
         KnowTools["Knowledge: teach, search, ingest, ingest_url, list, forget"]
     end
@@ -370,9 +371,9 @@ graph TB
 
 ### Tool System
 
-**Files:** `tools/core.py`, `tools/web.py`, `tools/browser.py`, `tools/scheduler.py`, `tools/skills.py`, `tools/delegation.py`, `tools/knowledge.py`
+**Files:** `tools/core.py`, `tools/web.py`, `tools/browser.py`, `tools/scheduler.py`, `tools/skills.py`, `tools/delegation.py`, `tools/knowledge.py`, `tools/plan.py`
 
-28 built-in tools across 7 modules:
+35 built-in tools across 8 modules:
 
 ```mermaid
 graph LR
@@ -404,6 +405,11 @@ graph LR
         agent_delegate
     end
 
+    subgraph "Plan (tools/plan.py) — 8 tools"
+        plan_present & plan_get & plan_approve & plan_revise
+        plan_reject & plan_cancel & plan_step_update & plan_complete
+    end
+
     subgraph "Knowledge (tools/knowledge.py) — 6 tools"
         knowledge_teach & knowledge_ingest & knowledge_search
         knowledge_list & knowledge_ingest_url & knowledge_forget
@@ -415,10 +421,14 @@ graph LR
 - `knowledge_*` → `KnowledgeManager`
 - `skill_*` → `SkillsManager`
 - `agent_delegate` → `SessionManager.delegate()`
+- `plan_present` → persist pending plan under `workspace/plans/`
+- `plan_cancel` → mark plan/steps cancelled; session returns to plan mode
 - `mcp__*` → `MCPManager.call_tool()`
 - Everything else → `tools/core.py:execute_tool()`
 
-**Per-agent scoping:** Agents define `tools: ["read", "write", ...]` or `tools: "*"` (unrestricted, Kit's default).
+**Per-agent scoping:** Agents define `tools: ["read", "write", ...]` or `tools: "*"`. Kit's allowlist is dynamic: plan mode (inspect + `plan_*` approval tools, no `agent_delegate`) or orchestrate mode (adds `agent_delegate` + `plan_step_update` / `plan_complete`) after `plan_approve`.
+
+**Plans HTTP API** (`gateway/server.py`): `GET /plans/current`, `GET /plans/{id}`, `POST /plans/{id}/approve|reject|revise|cancel`. Approve flips mode and kicks a synthetic Kit turn to orchestrate. Cancel hard-aborts in-flight runs (`Session.cancel_requested` + `active_runs` task cancel), then soft-stops remaining steps. Mutations broadcast `plan_updated` over WebSocket for the Plans panel and in-chat plan card.
 
 ### Skills System
 
@@ -590,7 +600,7 @@ Kit supports a team of specialized agents coordinated by a central "Kit" agent:
 
 ```mermaid
 graph TB
-    Kit["Kit (Chief of Staff)<br/>tools: * (all)<br/>persona: workspace/SOUL.md"]
+    Kit["Kit (Manager)<br/>plan ↔ orchestrate tools<br/>persona: workspace/SOUL.md"]
 
     Dev["Developer<br/>id: developer<br/>tools: scoped"]
     Res["Researcher<br/>id: researcher<br/>tools: scoped"]
@@ -698,6 +708,9 @@ workspace/
 │
 ├── schedules/                       # Scheduled tasks
 │   └── schedules.json
+│
+├── plans/                           # Pending/approved work plans from Kit
+│   └── plan_<id>.json
 │
 ├── knowledge/                       # Workspace-level knowledge
 │

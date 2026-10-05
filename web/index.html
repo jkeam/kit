@@ -30,6 +30,9 @@
         <nav class="icon-rail" aria-label="Workspace sections">
             <div class="rail-brand" title="Kit">K</div>
 
+            <button class="rail-btn" data-panel="plans" title="Plans" aria-label="Plans">
+                <i class="fas fa-list-check"></i>
+            </button>
             <button class="rail-btn" data-panel="activity" title="Team Activity" aria-label="Team Activity">
                 <i class="fas fa-bolt"></i>
             </button>
@@ -87,6 +90,9 @@
                     </div>
                 </div>
                 <div class="chat-header-actions">
+                    <button class="pill plan-header-pill" id="view-plan-btn" type="button" hidden title="Show current plan" aria-label="Show current plan">
+                        <i class="fas fa-list-check"></i> Plan
+                    </button>
                     <span class="pill" id="message-count">0 messages</span>
                     <button class="icon-action-btn" id="clear-chat-button" title="Clear this chat session" aria-label="Clear chat">
                         <i class="fas fa-broom"></i>
@@ -98,6 +104,14 @@
             </header>
 
             <div id="chat-messages" class="chat-messages"></div>
+
+            <div id="chat-plan-dock" class="chat-plan-dock" hidden>
+                <button type="button" class="chat-plan-dock-toggle" id="chat-plan-dock-toggle" aria-expanded="true">
+                    <span class="chat-plan-dock-summary" id="chat-plan-dock-summary">Plan</span>
+                    <i class="fas fa-chevron-down chat-plan-dock-chevron" aria-hidden="true"></i>
+                </button>
+                <div class="chat-plan-dock-body" id="chat-plan-dock-body"></div>
+            </div>
 
             <footer class="chat-composer">
                 <div class="mention-dropdown" id="mention-dropdown" hidden></div>
@@ -130,6 +144,9 @@
         <div class="workspace-modal">
             <div class="workspace-modal-header">
                 <div class="workspace-tabs" id="workspace-tabs">
+                    <button class="workspace-tab" data-tab="plans">
+                        <i class="fas fa-list-check"></i> Plans
+                    </button>
                     <button class="workspace-tab" data-tab="activity">
                         <i class="fas fa-bolt"></i> Team Activity
                     </button>
@@ -151,6 +168,15 @@
                 </button>
             </div>
             <div class="workspace-modal-body">
+                <div id="plans-tab" class="tab-content">
+                    <div class="plans-panel-header">
+                        <button id="refresh-plans" class="btn btn-secondary">Refresh</button>
+                    </div>
+                    <div id="plans-panel-body" class="plans-panel-body">
+                        <p class="empty-state">No active plan</p>
+                    </div>
+                </div>
+
                 <div id="activity-tab" class="tab-content">
                     <button id="refresh-activity" class="btn btn-secondary">Refresh</button>
                     <div id="activity-list"></div>

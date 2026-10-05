@@ -6,6 +6,7 @@ Session ID format: {platform}:{user_id}
 Example: telegram:123456789, discord:987654321, cli:local
 """
 
+import asyncio
 import contextlib
 import fcntl
 import json
@@ -57,6 +58,10 @@ class Session:
     agent: PersonalAssistant
     created_at: datetime = field(default_factory=datetime.now)
     last_active: datetime = field(default_factory=datetime.now)
+    mode: str = "plan"  # "plan" | "orchestrate"
+    active_plan_id: Optional[str] = None
+    # Set while a turn should abort (plan Cancel / hard stop).
+    cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
 
     def update_activity(self):
         """Update last active timestamp."""
@@ -100,6 +105,8 @@ class SessionManager:
         self.agent_status: Dict[str, Dict[str, Any]] = {}
         self.activity: "deque[Dict[str, Any]]" = deque(maxlen=ACTIVITY_BUFFER_SIZE)
         self.on_event = on_event
+        # session_id → asyncio.Task currently running a chat/delegate turn
+        self.active_runs: Dict[str, asyncio.Task] = {}
 
         # One shared embeddings manager (and SentenceTransformer model) for
         # every session's agent, instead of loading the model once per
@@ -318,6 +325,32 @@ class SessionManager:
 
         return full_response
 
+    def clear_cancel(self, session: "Session") -> None:
+        session.cancel_requested.clear()
+
+    def request_cancel(self, session: "Session") -> None:
+        session.cancel_requested.set()
+
+    def is_cancel_requested(self, session: "Session") -> bool:
+        return session.cancel_requested.is_set()
+
+    async def cancel_runs_for_user(self, platform: str, user_id: str) -> List[str]:
+        """Hard-cancel all in-flight turns for this user (Kit + teammates).
+
+        Sets cancel_requested on matching sessions and cancels their
+        asyncio tasks. Returns session_ids that were signalled.
+        """
+        signalled: List[str] = []
+        for sid, session in list(self.sessions.items()):
+            if session.platform != platform or session.user_id != user_id:
+                continue
+            self.request_cancel(session)
+            signalled.append(sid)
+            task = self.active_runs.get(sid)
+            if task is not None and not task.done():
+                task.cancel()
+        return signalled
+
     async def _run_and_track(
         self, session: "Session", message: str, depth: int = 0
     ) -> AsyncGenerator[Dict[str, Any], None]:
@@ -326,6 +359,10 @@ class SessionManager:
         gets more specific per tool call) and recording every tool-call
         event into the cross-agent activity feed - regardless of whether
         the caller is a direct chat, a stream, or a delegated task."""
+        self.clear_cancel(session)
+        task = asyncio.current_task()
+        if task is not None:
+            self.active_runs[session.session_id] = task
         await self._set_status(session.agent_id, "busy", _truncate(message), session.session_id)
         try:
             async for event in session.agent.chat_stream(message, _delegation_depth=depth):
@@ -340,7 +377,17 @@ class SessionManager:
                     description = _describe_tool_call(event.get("tool_name", ""), event.get("tool_args") or {})
                     await self._set_status(session.agent_id, "busy", description, session.session_id)
                 yield event
+        except asyncio.CancelledError:
+            await self._record({
+                "event_type": "cancelled",
+                "session_id": session.session_id,
+                "agent_id": session.agent_id,
+                "detail": {"message": "Cancelled"},
+            })
+            yield {"type": "stream_error", "error": "Cancelled"}
         finally:
+            if self.active_runs.get(session.session_id) is task:
+                self.active_runs.pop(session.session_id, None)
             await self._set_status(session.agent_id, "idle", None, session.session_id)
 
     async def _record(self, event: Dict[str, Any]) -> None:
@@ -449,6 +496,60 @@ class SessionManager:
         except (json.JSONDecodeError, OSError):
             return []
 
+    def get_llm_history(
+        self,
+        session_id: str,
+        current_user_message: Optional[str] = None,
+        limit: int = 40,
+    ) -> List[Dict[str, str]]:
+        """Prior user/assistant turns as OpenAI chat messages for the LLM.
+
+        Skips meta roles (reactions). When ``current_user_message`` was already
+        persisted as the trailing user entry (gateway saves before chat), that
+        entry is omitted so the caller can append it once.
+        """
+        # (role, display_content, raw_content) — raw used to detect a
+        # already-persisted current turn without matching delegated prefixes.
+        entries: List[tuple[str, str, str]] = []
+        for msg in self.get_messages(session_id):
+            role = msg.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            content = (msg.get("content") or "").strip()
+            if not content:
+                continue
+            display = content
+            sender = msg.get("sender")
+            if role == "user" and sender:
+                display = f"[Delegated from {sender}] {content}"
+            entries.append((role, display, content))
+
+        if (
+            current_user_message is not None
+            and entries
+            and entries[-1][0] == "user"
+            and entries[-1][2] == current_user_message
+        ):
+            entries.pop()
+
+        trimmed = entries[-limit:] if limit > 0 else entries
+        return [{"role": role, "content": display} for role, display, _ in trimmed]
+
+    def llm_history_for(
+        self,
+        platform: str,
+        user_id: str,
+        agent_id: str = KIT_AGENT_ID,
+        current_user_message: Optional[str] = None,
+        limit: int = 40,
+    ) -> List[Dict[str, str]]:
+        """Convenience wrapper: session id + ``get_llm_history``."""
+        return self.get_llm_history(
+            make_session_id(platform, user_id, agent_id),
+            current_user_message=current_user_message,
+            limit=limit,
+        )
+
     def clear_messages(self, session_id: str) -> None:
         """Delete persisted messages for a session."""
         path = self._session_file(session_id)
@@ -500,7 +601,9 @@ class SessionManager:
                 "agent_id": session.agent_id,
                 "created_at": session.created_at.isoformat(),
                 "last_active": session.last_active.isoformat(),
-                "message_count": chat_count
+                "message_count": chat_count,
+                "mode": session.mode,
+                "active_plan_id": session.active_plan_id,
             }
 
         if not messages:
@@ -514,7 +617,9 @@ class SessionManager:
             "agent_id": agent_id,
             "created_at": messages[0]["timestamp"],
             "last_active": messages[-1]["timestamp"],
-            "message_count": chat_count
+            "message_count": chat_count,
+            "mode": "plan",
+            "active_plan_id": None,
         }
 
     def clear_session(self, session_id: str) -> bool:

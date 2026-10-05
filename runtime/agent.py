@@ -7,6 +7,7 @@ This integrates with LlamaStack (soon OGX) which handles the ReAct loop.
 import asyncio
 import json
 import re
+import uuid
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Set, AsyncGenerator
 from llama_stack_client import AsyncLlamaStackClient
@@ -14,15 +15,57 @@ from openai import AsyncOpenAI
 
 from runtime.memory import MemoryManager
 from runtime.embeddings import EmbeddingsManager
+from runtime.harmony import looks_like_harmony, parse_harmony_content, strip_harmony
 from runtime.knowledge import KnowledgeManager
 from runtime.mcp import MCPManager, parse_mcp_tool_name
 from runtime.skills import SkillsManager
 from tools.core import TOOLS, execute_tool
+from tools.plan import (
+    PLAN_TOOL_FUNCTIONS,
+    coerce_plan_present_args,
+    extract_plan_from_model_output,
+    looks_like_plan_json,
+    plan_approve,
+    plan_cancel,
+    plan_complete,
+    plan_get,
+    plan_present,
+    plan_reject,
+    plan_revise,
+    plan_step_update,
+    resolve_plan_goal,
+)
 from env_config import env_int
 
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 15
+
+# Plan tools that end the turn after success (show the plan / ask the user).
+_PLAN_TERMINAL_TOOLS = frozenset({"plan_present", "plan_revise"})
+# Plan tools that may flip Kit between plan and orchestrate modes.
+_PLAN_MODE_TOOLS = frozenset({
+    "plan_present", "plan_approve", "plan_reject", "plan_complete",
+    "plan_revise", "plan_cancel",
+})
 
 _THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _clean_assistant_text(text: str) -> str:
+    """Strip model-internal markup (think tags, Harmony tokens) for display/logs."""
+    if not text:
+        return ""
+    cleaned = _THINK_TAG_RE.sub("", text)
+    cleaned = strip_harmony(cleaned)
+    return cleaned.strip()
+
+
+# Shown when the model finishes with no user-visible text (common with
+# gpt-oss: reasoning_content only, or Harmony analysis with no final channel).
+EMPTY_REPLY_NOTICE = (
+    "I finished processing but produced an empty reply "
+    "(the model returned only internal reasoning or no usable text). "
+    "Please try sending your message again."
+)
 
 # Rough chars-per-token ratio used for estimation (conservative — most
 # tokenizers average ~3.5–4 chars/token; using 3 overestimates and errs
@@ -37,6 +80,10 @@ _FALLBACK_CONTEXT_TOKENS = env_int("MAX_CONTEXT_TOKENS", 120_000)
 # Single tool-result cap (characters).  Prevents one enormous tool
 # response from filling the entire context window in a single round.
 MAX_TOOL_RESULT_CHARS = env_int("MAX_TOOL_RESULT_CHARS", 8_000)
+
+# Max prior user/assistant turns loaded from session history into each LLM
+# call. Token trimming drops older turns further if still over budget.
+MAX_HISTORY_MESSAGES = env_int("MAX_HISTORY_MESSAGES", 40)
 
 # Reserve this fraction of the detected context window for the model's
 # own output and overhead (tool definition expansion by proxies, etc.).
@@ -100,8 +147,8 @@ class PersonalAssistant:
                 Avoids loading a separate SentenceTransformer model per
                 session. If omitted, one is created per `use_embeddings`.
             allowed_tools: Restrict this agent to a subset of the global
-                tool registry (by name). None (default) means unrestricted,
-                which preserves Kit's original full-access behavior.
+                tool registry (by name). None (default) means unrestricted.
+                Kit is given an explicit manager allowlist by AgentRegistry.
             allowed_skills: Restrict which named skills this agent may
                 execute/list/manage. None (default) means unrestricted.
             soul_override: Persona text to use instead of loading
@@ -170,9 +217,8 @@ class PersonalAssistant:
         self.soul = soul_override if soul_override is not None else self._load_file("SOUL.md")
         self.agents_md = self._load_file("AGENTS.md")
 
-        # Per-agent tool/skill scoping. None means unrestricted (Kit's
-        # original behavior). Computed once since the allowlist is static
-        # for the lifetime of this instance.
+        # Per-agent tool/skill scoping. None means unrestricted.
+        # Kit's allowlist is dynamic: plan vs orchestrate (see _sync_tools_for_mode).
         self.allowed_tools = allowed_tools
         self.allowed_skills = allowed_skills
         self._filtered_tools = (
@@ -189,6 +235,9 @@ class PersonalAssistant:
         self.platform = platform
         self.user_id = user_id
         self._current_delegation_depth = 0
+        # Fallback when there is no Session (unit tests / bare CLI).
+        self.mode = "plan"
+        self.active_plan_id: Optional[str] = None
 
         self.mcp: Optional[MCPManager] = (
             MCPManager(mcp_servers) if mcp_servers else None
@@ -271,15 +320,75 @@ class PersonalAssistant:
 
         return notices
 
+    def _own_session(self) -> Optional[Any]:
+        if not self.session_manager or self.platform is None or self.user_id is None:
+            return None
+        try:
+            from gateway.session_manager import make_session_id
+            sid = make_session_id(self.platform, self.user_id, self.agent_id or "kit")
+            return self.session_manager.sessions.get(sid)
+        except Exception:
+            return None
+
+    def _cancel_requested(self) -> bool:
+        session = self._own_session()
+        if session is None:
+            return False
+        ev = getattr(session, "cancel_requested", None)
+        return bool(ev is not None and ev.is_set())
+
+    def _get_mode(self) -> str:
+        session = self._own_session()
+        if session is not None:
+            return getattr(session, "mode", "plan") or "plan"
+        return self.mode or "plan"
+
+    def _set_mode(self, mode: str, plan_id: Optional[str] = None) -> None:
+        """Update plan/orchestrate mode and optional active plan id.
+
+        Callers:
+        - plan_approve → mode=orchestrate, plan_id=<id>
+        - plan_present → mode=plan, plan_id=<new id>
+        - plan_reject / plan_complete / plan_cancel → mode=plan, plan_id=None
+        """
+        self.mode = mode
+        self.active_plan_id = plan_id
+        session = self._own_session()
+        if session is not None:
+            session.mode = mode
+            session.active_plan_id = plan_id
+        self._sync_tools_for_mode()
+
+    def _sync_tools_for_mode(self) -> None:
+        """Rebuild Kit's tool schema from session mode. No-op for other agents."""
+        if (self.agent_id or "kit") != "kit":
+            return
+        from runtime.agents import KIT_ORCHESTRATE_TOOLS, KIT_PLAN_TOOLS
+
+        mode = self._get_mode()
+        names = set(KIT_ORCHESTRATE_TOOLS if mode == "orchestrate" else KIT_PLAN_TOOLS)
+        self.allowed_tools = names
+        mcp_tools = [
+            t for t in self._filtered_tools
+            if t["function"]["name"].startswith("mcp__")
+        ]
+        self._filtered_tools = [
+            t for t in TOOLS if t["function"]["name"] in names
+        ] + mcp_tools
+
     def _team_roster_section(self) -> str:
-        """List of teammates this agent can hand tasks to via agent_delegate,
-        resolved fresh from the registry every time the system prompt is
-        rebuilt (i.e. every turn) so a newly-created agent becomes visible
-        immediately - no restart, no stale snapshot taken at construction
-        time. Empty for agents that don't have agent_delegate at all."""
+        """List of teammates, resolved fresh from the registry every turn.
+
+        Shown to anyone who can `agent_delegate`, and to Kit even without
+        that tool so he can assign steps in `plan_present`. Empty otherwise.
+        """
         if not self.session_manager:
             return ""
-        if self.allowed_tools is not None and "agent_delegate" not in self.allowed_tools:
+        can_delegate = (
+            self.allowed_tools is None or "agent_delegate" in self.allowed_tools
+        )
+        is_kit = (self.agent_id or "kit") == "kit"
+        if not can_delegate and not is_kit:
             return ""
         try:
             roster = self.session_manager.agent_registry.list_agents()
@@ -288,14 +397,103 @@ class PersonalAssistant:
         teammates = [a for a in roster if a.id != (self.agent_id or "kit")]
         if not teammates:
             return ""
-        lines = [
-            "# YOUR TEAM\n",
-            "You can hand a task to any of these agents with the agent_delegate tool "
-            "(agent_delegate(agent_id, task)) - only that agent acts on it:\n",
-        ]
+        mode = self._get_mode()
+        if can_delegate:
+            intro = (
+                "You can hand a task to any of these agents with the agent_delegate tool "
+                "(agent_delegate(agent_id, task)) - only that agent acts on it. "
+                "Walk the approved plan in dependency order; pass prior step results "
+                "in the task text. After each reply, call plan_step_update.\n"
+            )
+        elif mode == "plan":
+            intro = (
+                "Assign plan_present steps to these teammates by agent_id. "
+                "You cannot delegate or implement yet — present the plan and wait "
+                "for the user to approve (then call plan_approve).\n"
+            )
+        else:
+            intro = "Your teammates:\n"
+        lines = ["# YOUR TEAM\n", intro]
         for a in teammates:
             lines.append(f"- **{a.id}** ({a.name}): {a.description}")
         return "\n".join(lines)
+
+    def _apply_plan_tool_side_effects(self, tool_name: str, result: str) -> None:
+        """Flip Kit session mode based on successful plan tool results."""
+        if (self.agent_id or "kit") != "kit":
+            return
+        if result.startswith("Error"):
+            return
+        plan_id = None
+        for line in result.splitlines():
+            if "Plan id:" in line and "`" in line:
+                plan_id = line.split("`")[1]
+                break
+        if tool_name == "plan_approve":
+            self._set_mode("orchestrate", plan_id=plan_id)
+        elif tool_name in ("plan_reject", "plan_complete", "plan_cancel"):
+            self._set_mode("plan", plan_id=None)
+        elif tool_name == "plan_present":
+            self._set_mode("plan", plan_id=plan_id)
+        elif tool_name == "plan_revise" and plan_id:
+            session = self._own_session()
+            if session is not None:
+                session.active_plan_id = plan_id
+            else:
+                self.active_plan_id = plan_id
+
+    def _run_plan_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> str:
+        workspace = str(self.workspace_dir)
+        if tool_name == "plan_present":
+            kwargs = coerce_plan_present_args(tool_args)
+            return plan_present(
+                goal=kwargs.get("goal", ""),
+                steps=kwargs.get("steps"),
+                risks=kwargs.get("risks"),
+                open_questions=kwargs.get("open_questions"),
+                workspace_dir=workspace,
+            )
+        if tool_name == "plan_get":
+            return plan_get(plan_id=tool_args.get("plan_id"), workspace_dir=workspace)
+        if tool_name == "plan_approve":
+            return plan_approve(plan_id=tool_args.get("plan_id"), workspace_dir=workspace)
+        if tool_name == "plan_revise":
+            return plan_revise(
+                plan_id=tool_args.get("plan_id"),
+                goal=tool_args.get("goal"),
+                steps=tool_args.get("steps"),
+                risks=tool_args.get("risks"),
+                open_questions=tool_args.get("open_questions"),
+                workspace_dir=workspace,
+            )
+        if tool_name == "plan_reject":
+            return plan_reject(
+                plan_id=tool_args.get("plan_id"),
+                reason=tool_args.get("reason"),
+                workspace_dir=workspace,
+            )
+        if tool_name == "plan_step_update":
+            return plan_step_update(
+                step_id=tool_args.get("step_id", ""),
+                status=tool_args.get("status", ""),
+                plan_id=tool_args.get("plan_id"),
+                result=tool_args.get("result"),
+                clarification=tool_args.get("clarification"),
+                workspace_dir=workspace,
+            )
+        if tool_name == "plan_complete":
+            return plan_complete(
+                plan_id=tool_args.get("plan_id"),
+                summary=tool_args.get("summary"),
+                workspace_dir=workspace,
+            )
+        if tool_name == "plan_cancel":
+            return plan_cancel(
+                plan_id=tool_args.get("plan_id"),
+                reason=tool_args.get("reason"),
+                workspace_dir=workspace,
+            )
+        return f"Error: unknown plan tool '{tool_name}'"
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt from SOUL.md, AGENTS.md, team roster, and memory."""
@@ -371,6 +569,11 @@ class PersonalAssistant:
                     f"(from {Path(r['source']).name})"
                 )
             return "\n\n".join(formatted) if formatted else "No relevant memories found"
+
+        if tool_name in PLAN_TOOL_FUNCTIONS:
+            result = self._run_plan_tool(tool_name, tool_args)
+            self._apply_plan_tool_side_effects(tool_name, result)
+            return result
 
         if tool_name == "knowledge_search":
             if not self.knowledge:
@@ -462,6 +665,98 @@ class PersonalAssistant:
 
         return result
 
+    def _resolve_teammate_id(self, raw: str) -> Optional[str]:
+        """Map fuzzy agent ids (e.g. 'researcher') to a real roster id."""
+        raw = (raw or "").strip()
+        if not raw or not self.session_manager:
+            return None
+        reg = self.session_manager.agent_registry
+        if reg.resolve(raw) is not None:
+            return raw
+        agents = [a for a in reg.list_agents() if a.id != (self.agent_id or "kit")]
+        lower = raw.lower()
+        for a in agents:
+            if a.id.lower() == lower or a.name.lower() == lower:
+                return a.id
+        matches: List[str] = []
+        for a in agents:
+            aid = a.id.lower()
+            if aid.startswith(lower + "-") or aid.startswith(lower):
+                matches.append(a.id)
+            elif (a.template_id or "").lower() == lower:
+                matches.append(a.id)
+        # Prefer id like researcher-1 over looser matches.
+        matches = list(dict.fromkeys(matches))
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            numbered = [m for m in matches if re.search(r"-\d+$", m)]
+            return numbered[0] if numbered else matches[0]
+        return None
+
+    def _task_from_plan_step(self, step_id: str) -> str:
+        """Build a delegate task from the active plan step when the model omits task."""
+        if not step_id:
+            return ""
+        from tools.plan import load_plan, latest_plan
+
+        workspace = str(self.workspace_dir)
+        plan = None
+        pid = self.active_plan_id or (self._own_session() and self._own_session().active_plan_id)
+        if pid:
+            plan = load_plan(str(pid), workspace)
+        if plan is None:
+            plan = latest_plan(workspace, statuses=["approved", "running", "blocked"])
+        if not plan:
+            return ""
+        for step in plan.get("steps", []):
+            if str(step.get("id")) == str(step_id):
+                action = (step.get("action") or "").strip()
+                criteria = (step.get("success_criteria") or "").strip()
+                if criteria:
+                    return f"{action}\n\nSuccess criteria: {criteria}"
+                return action
+        return ""
+
+    def _normalize_delegate_args(self, tool_args: Dict[str, Any]) -> Dict[str, Any]:
+        """Repair gpt-oss / Harmony mangled agent_delegate payloads."""
+        args = dict(tool_args or {})
+        raw_id = str(args.get("agent_id") or args.get("agent") or "").strip()
+        resolved = self._resolve_teammate_id(raw_id) if raw_id else None
+        if resolved:
+            args["agent_id"] = resolved
+        task = (
+            args.get("task")
+            or args.get("description")
+            or args.get("action")
+            or args.get("message")
+            or args.get("instruction")
+            or ""
+        )
+        task = str(task).strip()
+        if not task:
+            step_id = args.get("step_id") or args.get("id")
+            task = self._task_from_plan_step(str(step_id) if step_id else "")
+        args["task"] = task
+        return args
+
+    def _has_ready_plan_steps(self) -> bool:
+        if (self.agent_id or "kit") != "kit" or self._get_mode() != "orchestrate":
+            return False
+        from tools.plan import load_plan, latest_plan, ready_steps
+
+        workspace = str(self.workspace_dir)
+        pid = self.active_plan_id
+        session = self._own_session()
+        if session is not None and session.active_plan_id:
+            pid = session.active_plan_id
+        plan = load_plan(str(pid), workspace) if pid else None
+        if plan is None:
+            plan = latest_plan(workspace, statuses=["approved", "running", "blocked"])
+        if not plan or plan.get("status") not in ("approved", "running", "blocked"):
+            return False
+        return bool(ready_steps(plan))
+
     async def _delegate(self, tool_args: Dict[str, Any]) -> str:
         """Hand a task to another agent on the team and return its reply.
 
@@ -477,18 +772,26 @@ class PersonalAssistant:
         if self._current_delegation_depth >= MAX_DELEGATION_DEPTH:
             return "Error: delegation depth limit reached - avoid configuring delegation cycles"
 
+        tool_args = self._normalize_delegate_args(tool_args)
         target_agent_id = tool_args.get("agent_id")
         task = tool_args.get("task", "")
         if not target_agent_id:
             return "Error: agent_delegate requires 'agent_id'"
+        if self.session_manager.agent_registry.resolve(str(target_agent_id)) is None:
+            return (
+                f"Error: unknown agent '{target_agent_id}'. "
+                "Use an exact id from YOUR TEAM (e.g. researcher-1)."
+            )
+        if not task:
+            return "Error: agent_delegate requires a non-empty 'task'"
 
         try:
             return await self.session_manager.delegate(
                 platform=self.platform,
                 user_id=self.user_id,
                 from_agent_id=self.agent_id or "kit",
-                to_agent_id=target_agent_id,
-                task=task,
+                to_agent_id=str(target_agent_id),
+                task=str(task),
                 depth=self._current_delegation_depth + 1,
             )
         except Exception as e:
@@ -501,6 +804,10 @@ class PersonalAssistant:
         """
         if tool_name == "agent_delegate":
             return await self._delegate(tool_args)
+        # Plan tools mutate session mode / tool allowlists — keep on the
+        # event loop, not in a worker thread.
+        if tool_name in PLAN_TOOL_FUNCTIONS:
+            return self._execute_tool(tool_name, tool_args)
         if self.mcp:
             parsed = parse_mcp_tool_name(tool_name)
             if parsed:
@@ -521,8 +828,11 @@ class PersonalAssistant:
 
     @staticmethod
     def _trim_context(messages: list, tools: list, limit: int) -> None:
-        """Drop or shorten the oldest tool-result messages until the
-        estimated token count is under `limit`.  Mutates `messages`."""
+        """Shrink the request until under `limit` tokens. Mutates `messages`.
+
+        Order: shorten oversized tool results, then drop the oldest non-system
+        messages (keeping the system prompt and the latest user turn).
+        """
         while PersonalAssistant._estimate_tokens(messages, tools) > limit:
             trimmed = False
             for m in messages:
@@ -530,8 +840,44 @@ class PersonalAssistant:
                     m["content"] = m["content"][:200] + "\n[truncated to fit context window]"
                     trimmed = True
                     break
-            if not trimmed:
+            if trimmed:
+                continue
+            # system (0) + at least the current user message must remain
+            if len(messages) <= 2:
                 break
+            drop_idx = 1
+            dropped_role = messages[drop_idx].get("role")
+            del messages[drop_idx]
+            # Drop orphaned tool results that belonged to a removed assistant turn
+            if dropped_role == "assistant":
+                while (
+                    drop_idx < len(messages) - 1
+                    and messages[drop_idx].get("role") == "tool"
+                ):
+                    del messages[drop_idx]
+
+    def _prior_messages(self, user_message: str) -> List[Dict[str, str]]:
+        """Load prior user/assistant turns for this session from disk.
+
+        Returns [] when there is no session manager (unit tests / bare CLI)
+        or no persisted history yet.
+        """
+        sm = self.session_manager
+        if sm is None or not self.platform or not self.user_id:
+            return []
+        fn = getattr(sm, "llm_history_for", None)
+        if fn is None:
+            return []
+        try:
+            return fn(
+                self.platform,
+                self.user_id,
+                self.agent_id or "kit",
+                current_user_message=user_message,
+                limit=MAX_HISTORY_MESSAGES,
+            )
+        except Exception:
+            return []
 
     @staticmethod
     def _cap_tool_result(result: str) -> str:
@@ -567,14 +913,35 @@ class PersonalAssistant:
             stream_error  - error {"error": str}
         """
         self._current_delegation_depth = _delegation_depth
+        terminal_plan_outputs: list[str] = []
         try:
+            self._sync_tools_for_mode()
             mcp_notices = await self._ensure_mcp_connected()
             context_limit = await self._resolve_context_limit()
             system_prompt = self._build_system_prompt()
-            messages = [
+            mode = self._get_mode()
+            if (self.agent_id or "kit") == "kit":
+                system_prompt += (
+                    f"\n\n---\n\n# SESSION MODE\n\n"
+                    f"Current mode: **{mode}**.\n"
+                )
+                if mode == "plan":
+                    system_prompt += (
+                        "Present or revise plans. On user approval call plan_approve. "
+                        "Do not implement or delegate until approved.\n"
+                    )
+                else:
+                    system_prompt += (
+                        "Orchestrate the approved plan with agent_delegate and "
+                        "plan_step_update. Handle teammate clarifications. "
+                        "Call plan_complete when every step is done. "
+                        "For a new unrelated request, plan_present (supersedes) or plan_reject first.\n"
+                    )
+            messages: List[Dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
             ]
+            messages.extend(self._prior_messages(user_message))
+            messages.append({"role": "user", "content": user_message})
 
             yield {"type": "stream_start"}
 
@@ -583,8 +950,19 @@ class PersonalAssistant:
 
             all_content_parts: list[str] = []
             tools_for_llm = self._filtered_tools or None
+            # Track whether this turn made orchestration progress; if not,
+            # nudge once so gpt-oss cannot "claim" work and leave the plan stuck.
+            # Only auto-nudge when we *started* in orchestrate (not the same
+            # turn that just approved the plan).
+            started_orchestrating = self._get_mode() == "orchestrate"
+            orch_progress = False
+            orch_nudged = False
 
             for _round in range(MAX_TOOL_ROUNDS):
+                if self._cancel_requested():
+                    yield {"type": "stream_error", "error": "Cancelled"}
+                    return
+
                 self._trim_context(messages, self._filtered_tools, context_limit)
                 try:
                     stream = await self.client.chat.completions.create(
@@ -607,8 +985,14 @@ class PersonalAssistant:
                 content_parts: list[str] = []
                 tool_calls_acc: dict[int, dict] = {}
                 finish_reason = None
+                # Once Harmony control tokens appear, stop streaming raw deltas
+                # so <|start|>/<|call|> junk does not flash in the UI.
+                harmony_streaming = False
 
                 async for chunk in stream:
+                    if self._cancel_requested():
+                        yield {"type": "stream_error", "error": "Cancelled"}
+                        return
                     if not chunk.choices:
                         continue
                     choice = chunk.choices[0]
@@ -616,7 +1000,15 @@ class PersonalAssistant:
 
                     if delta and delta.content:
                         content_parts.append(delta.content)
-                        yield {"type": "text_delta", "content": delta.content}
+                        if not harmony_streaming:
+                            joined = "".join(content_parts)
+                            if (
+                                looks_like_harmony(joined)
+                                or looks_like_plan_json(joined)
+                            ):
+                                harmony_streaming = True
+                        if not harmony_streaming:
+                            yield {"type": "text_delta", "content": delta.content}
 
                     if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
                         for tc in delta.tool_calls:
@@ -635,10 +1027,10 @@ class PersonalAssistant:
                         finish_reason = choice.finish_reason
 
                 round_content = "".join(content_parts)
-                all_content_parts.append(round_content)
+                visible_round, harmony_calls = parse_harmony_content(round_content)
 
-                if finish_reason == "tool_calls" and tool_calls_acc:
-                    assistant_tool_calls = []
+                assistant_tool_calls = []
+                if tool_calls_acc:
                     for idx in sorted(tool_calls_acc.keys()):
                         tc = tool_calls_acc[idx]
                         assistant_tool_calls.append({
@@ -646,10 +1038,57 @@ class PersonalAssistant:
                             "type": "function",
                             "function": {"name": tc["name"], "arguments": tc["arguments"]},
                         })
+                elif harmony_calls:
+                    # Proxy leaked Harmony tool calls into content instead of
+                    # structured tool_calls — recover and execute them.
+                    assistant_tool_calls = harmony_calls
+
+                # Model-agnostic fallback: if the model described a plan in JSON
+                # or markdown instead of calling plan_present, synthesize the tool call.
+                has_plan_present = any(
+                    (tc.get("function") or {}).get("name") == "plan_present"
+                    for tc in assistant_tool_calls
+                )
+                if not has_plan_present:
+                    recovered = extract_plan_from_model_output(
+                        round_content, fallback_goal=user_message
+                    )
+                    if recovered:
+                        assistant_tool_calls = [{
+                            "id": f"harmony_{uuid.uuid4().hex[:12]}",
+                            "type": "function",
+                            "function": {
+                                "name": "plan_present",
+                                "arguments": json.dumps(recovered),
+                            },
+                        }]
+                        visible_round = ""
+                        harmony_streaming = True
+
+                # If Harmony/JSON suppressed mid-stream deltas, flush recovered
+                # user-facing text once (e.g. final-channel answer). Skip when
+                # we already streamed a plain-text prefix before the first `<|`.
+                if harmony_streaming and visible_round:
+                    raw_prefix = round_content.split("<|", 1)[0]
+                    if not raw_prefix.strip() and not looks_like_plan_json(round_content):
+                        yield {"type": "text_delta", "content": visible_round}
+                if visible_round and not (
+                    assistant_tool_calls
+                    and any(
+                        (tc.get("function") or {}).get("name") == "plan_present"
+                        for tc in assistant_tool_calls
+                    )
+                ):
+                    all_content_parts.append(visible_round)
+
+                if assistant_tool_calls:
+                    if self._cancel_requested():
+                        yield {"type": "stream_error", "error": "Cancelled"}
+                        return
 
                     messages.append({
                         "role": "assistant",
-                        "content": round_content or None,
+                        "content": visible_round or None,
                         "tool_calls": assistant_tool_calls,
                     })
 
@@ -657,73 +1096,175 @@ class PersonalAssistant:
                     for tc_msg in assistant_tool_calls:
                         tool_name = tc_msg["function"]["name"]
                         try:
-                            tool_args = json.loads(tc_msg["function"]["arguments"])
+                            tool_args = json.loads(tc_msg["function"]["arguments"] or "{}")
                         except json.JSONDecodeError:
                             tool_args = {}
+                        if not isinstance(tool_args, dict):
+                            tool_args = {}
+                        if tool_name == "plan_present":
+                            tool_args = coerce_plan_present_args(tool_args)
+                            tool_args["goal"] = resolve_plan_goal(
+                                tool_args.get("goal"),
+                                tool_args.get("steps")
+                                if isinstance(tool_args.get("steps"), list)
+                                else None,
+                                fallback_goal=user_message,
+                            )
                         parsed_calls.append((tc_msg, tool_name, tool_args))
 
                     for _, tool_name, tool_args in parsed_calls:
                         yield {"type": "tool_call_start", "tool_name": tool_name, "tool_args": tool_args}
 
                     async def _run_tool(name: str, args: Dict[str, Any]) -> str:
+                        if self._cancel_requested():
+                            return "Error: Cancelled"
                         try:
                             return self._cap_tool_result(
                                 str(await self._execute_tool_async(name, args))
                             )
+                        except asyncio.CancelledError:
+                            raise
                         except Exception as e:
                             return f"Error: {e}"
 
-                    results = await asyncio.gather(
-                        *(_run_tool(name, args) for _, name, args in parsed_calls)
-                    )
+                    try:
+                        results = await asyncio.gather(
+                            *(_run_tool(name, args) for _, name, args in parsed_calls)
+                        )
+                    except asyncio.CancelledError:
+                        yield {"type": "stream_error", "error": "Cancelled"}
+                        return
 
-                    for (tc_msg, tool_name, _), result in zip(parsed_calls, results):
+                    clarification_stops: list[str] = []
+                    for (tc_msg, tool_name, tool_args), result in zip(parsed_calls, results):
                         yield {"type": "tool_call_result", "tool_name": tool_name, "result": result}
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tc_msg["id"],
                             "content": result,
                         })
+                        if (
+                            tool_name in _PLAN_TERMINAL_TOOLS
+                            and not str(result).startswith("Error")
+                        ):
+                            terminal_plan_outputs.append(str(result))
+                        if (
+                            tool_name == "plan_step_update"
+                            and tool_args.get("status") == "needs_clarification"
+                            and not str(result).startswith("Error")
+                        ):
+                            clarification_stops.append(str(result))
+                        if (
+                            tool_name in ("agent_delegate", "plan_step_update")
+                            and not str(result).startswith("Error")
+                        ):
+                            orch_progress = True
 
+                    # Refresh tools after mode-changing plan tools (e.g. approve → orchestrate).
+                    if any(name in _PLAN_MODE_TOOLS for _, name, _ in parsed_calls):
+                        tools_for_llm = self._filtered_tools or None
+
+                    if terminal_plan_outputs or clarification_stops:
+                        outputs = terminal_plan_outputs + clarification_stops
+                        combined = visible_round or ""
+                        extras = [md for md in outputs if md.strip() not in combined]
+                        if extras:
+                            extra = "\n\n".join(extras)
+                            yield {"type": "text_delta", "content": extra}
+                            all_content_parts.append(extra)
+                        break
+
+                    continue
+
+                # No tool calls this round. If Kit started this turn already
+                # orchestrating and never delegated/updated, force recovery.
+                if (
+                    started_orchestrating
+                    and not orch_progress
+                    and not orch_nudged
+                    and (self.agent_id or "kit") == "kit"
+                    and self._get_mode() == "orchestrate"
+                    and self._has_ready_plan_steps()
+                ):
+                    orch_nudged = True
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "ORCHESTRATION STALLED: ready plan steps are still pending. "
+                            "Immediately call agent_delegate with the exact agent_id from "
+                            "the plan / YOUR TEAM (e.g. researcher-1, not 'researcher') "
+                            "and task set to that step's action. After the teammate replies, "
+                            "call plan_step_update. Do not claim progress without tools."
+                        ),
+                    })
                     continue
 
                 break
 
-            full_response = "".join(all_content_parts)
-            visible_text = _THINK_TAG_RE.sub("", full_response).strip()
+            full_response = _clean_assistant_text("".join(all_content_parts))
+            visible_text = full_response
 
             if not visible_text:
-                used_tools = len(messages) > 2
-                messages.append({
-                    "role": "user",
-                    "content": (
+                used_tools = any(m.get("role") == "tool" for m in messages)
+                if (
+                    started_orchestrating
+                    and (self.agent_id or "kit") == "kit"
+                    and self._get_mode() == "orchestrate"
+                    and self._has_ready_plan_steps()
+                    and not orch_progress
+                ):
+                    empty_prompt = (
+                        "Your response was empty and ready plan steps are still pending. "
+                        "Call agent_delegate now with the exact agent_id from the plan "
+                        "(e.g. researcher-1) and a clear task, then plan_step_update."
+                    )
+                elif used_tools:
+                    empty_prompt = (
                         "You used tools and got results but your response was empty. "
                         "Please provide a clear answer to the original question based "
                         "on the tool results you received."
-                    ) if used_tools else (
+                    )
+                else:
+                    empty_prompt = (
                         "Your response was empty. Please provide a clear, "
                         "visible answer to the user's question. Do not respond "
                         "with only internal reasoning."
-                    ),
+                    )
+                messages.append({
+                    "role": "user",
+                    "content": empty_prompt,
                 })
                 self._trim_context(messages, self._filtered_tools, context_limit)
-                retry_stream = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    stream=True,
-                )
-                retry_parts: list[str] = []
-                async for chunk in retry_stream:
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    if delta and delta.content:
-                        retry_parts.append(delta.content)
-                        yield {"type": "text_delta", "content": delta.content}
-                retry_text = "".join(retry_parts)
-                retry_visible = _THINK_TAG_RE.sub("", retry_text).strip()
-                if retry_visible:
-                    full_response = retry_text
+                try:
+                    retry_stream = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        stream=True,
+                    )
+                    retry_parts: list[str] = []
+                    async for chunk in retry_stream:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+                        if delta and delta.content:
+                            retry_parts.append(delta.content)
+                            yield {"type": "text_delta", "content": delta.content}
+                    retry_text = "".join(retry_parts)
+                    retry_visible = _clean_assistant_text(retry_text)
+                    if retry_visible:
+                        full_response = retry_visible
+                except Exception as retry_err:
+                    error_msg = str(retry_err)
+                    self.memory.log_interaction(
+                        user_message, f"ERROR: {error_msg}", speaker=self._log_speaker()
+                    )
+                    self._reindex_memory()
+                    yield {"type": "stream_error", "error": error_msg}
+                    return
+
+                if not full_response:
+                    full_response = EMPTY_REPLY_NOTICE
+                    yield {"type": "text_delta", "content": full_response}
 
             self.memory.log_interaction(user_message, full_response, speaker=self._log_speaker())
             self._reindex_memory()

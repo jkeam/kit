@@ -54,6 +54,7 @@ workspace/skills/skills_metadata.json
 workspace/skills/*.py
 workspace/skills/*.md
 workspace/skills/*.bak
+workspace/plans/
 
 # Instantiated team roster (per-user; built-in presets live in templates/agents/)
 workspace/agents/

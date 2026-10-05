@@ -1,9 +1,8 @@
 """
 Agent Registry - defines and resolves Kit's team of agents.
 
-Kit itself is the built-in "chief of staff" agent (full tool/skill access,
-persona = workspace/SOUL.md, for backward compatibility with the original
-single-agent setup). Every other team member is created from a template
+Kit itself is the built-in manager agent (plan-mode tool allowlist, persona
+= workspace/SOUL.md). Every other team member is created from a template
 (built-in presets in templates/agents/, or user-authored ones in
 workspace/agent_templates/) with optional tool/skill/persona overrides, and
 is persisted under workspace/agents/.
@@ -17,6 +16,41 @@ from typing import Any, Dict, List, Optional, Union
 
 TOOL_WILDCARD = "*"
 KIT_AGENT_ID = "kit"
+
+# Kit plans and inspects; he does not implement. After the user approves a
+# plan, Session mode flips to orchestrate and Kit's allowlist gains
+# agent_delegate + step tracking tools (see KIT_ORCHESTRATE_TOOLS).
+KIT_PLAN_TOOLS: List[str] = [
+    "read",
+    "list_files",
+    "memory_get",
+    "memory_search",
+    "knowledge_search",
+    "plan_present",
+    "plan_get",
+    "plan_approve",
+    "plan_revise",
+    "plan_reject",
+    "plan_cancel",
+]
+
+KIT_ORCHESTRATE_TOOLS: List[str] = [
+    "read",
+    "list_files",
+    "memory_get",
+    "memory_search",
+    "knowledge_search",
+    "agent_delegate",
+    "plan_get",
+    "plan_step_update",
+    "plan_complete",
+    "plan_reject",
+    "plan_cancel",
+    "plan_present",  # new request can supersede the active plan
+]
+
+# Default allowlist used when synthesizing Kit (plan mode).
+KIT_MANAGER_TOOLS: List[str] = list(KIT_PLAN_TOOLS)
 
 ToolList = Union[List[str], str]  # str is only ever the "*" wildcard
 
@@ -39,12 +73,12 @@ class AgentDefinition:
 
     @property
     def allowed_tools(self) -> Optional[set]:
-        """None means unrestricted (full access, e.g. Kit)."""
+        """None means unrestricted (`tools: "*"`). Kit uses an explicit list."""
         return None if self.tools == TOOL_WILDCARD else set(self.tools)
 
     @property
     def allowed_skills(self) -> Optional[set]:
-        """None means unrestricted (full access, e.g. Kit)."""
+        """None means unrestricted (`skills: "*"`)."""
         return None if self.skills == TOOL_WILDCARD else set(self.skills)
 
 
@@ -124,9 +158,12 @@ class AgentRegistry:
         return {
             "id": KIT_AGENT_ID,
             "name": "Kit",
-            "description": "Chief of staff - manages the team, full tool/skill access.",
+            "description": (
+                "Manager - inspects the workspace, presents a plan, and "
+                "waits for approval. Does not implement work himself."
+            ),
             "template_id": None,
-            "tools": TOOL_WILDCARD,
+            "tools": list(KIT_MANAGER_TOOLS),
             "skills": TOOL_WILDCARD,
         }
 

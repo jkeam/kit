@@ -8,7 +8,7 @@ scoping resolved from the AgentRegistry.
 import pytest
 
 from gateway.session_manager import SessionManager, make_session_id
-from runtime.agents import AgentRegistry
+from runtime.agents import KIT_PLAN_TOOLS, AgentRegistry
 
 
 class _NoEmbeddings:
@@ -59,7 +59,9 @@ def test_get_session_defaults_to_kit(session_manager):
     session = session_manager.get_session("web", "browser")
     assert session.agent_id == "kit"
     assert session.session_id == "web:browser"
-    assert session.agent.allowed_tools is None
+    assert session.agent.allowed_tools == set(KIT_PLAN_TOOLS)
+    assert session.mode == "plan"
+    assert session.active_plan_id is None
 
 
 def test_get_session_for_specific_agent_scopes_tools(session_manager):

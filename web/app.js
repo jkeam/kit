@@ -457,9 +457,165 @@ function addMessage(content, role = 'user', id = null, sender = null, agentId = 
     messageDiv.appendChild(body);
 
     chatMessages.appendChild(messageDiv);
+
+    if (role === 'assistant') {
+        maybeAttachPlanDraftActions(messageDiv, content, agentId || currentAgentId);
+    }
+
     scrollChatToBottom();
 
     return messageDiv;
+}
+
+function looksLikePlanDraft(text) {
+    if (!text || typeof text !== 'string') return false;
+    const hasHeading = /(\*\*|\#)\s*plan\s*:/i.test(text) || /plan id:/i.test(text);
+    const hasSteps = /\|[^|\n]*step[^|\n]*\|/i.test(text)
+        || /^\s*\d+\.\s+\*\*[^*]+\*\*/m.test(text);
+    return hasHeading && hasSteps;
+}
+
+function looksLikePlanJson(text) {
+    if (!text || typeof text !== 'string') return false;
+    const t = text.trim();
+    // Streaming or complete JSON plan in any common model shape.
+    if (/\{\s*"(?:goal|plan|title|objective|steps|tasks)"\s*:/.test(t)) return true;
+    try {
+        const p = JSON.parse(t.startsWith('```')
+            ? t.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+            : t);
+        if (!p || typeof p !== 'object') return false;
+        const plan = (p.plan && typeof p.plan === 'object') ? p.plan : p;
+        return !!(
+            (plan.goal || plan.title || plan.objective)
+            && (plan.steps || plan.tasks)
+        );
+    } catch {
+        return false;
+    }
+}
+
+async function capturePlanJsonBlob(text) {
+    const response = await apiFetch(`${API_BASE}/plans/from-chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            platform: PLATFORM,
+            user_id: USER_ID,
+            text,
+            action: 'present',
+        }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(typeof data.detail === 'string' ? data.detail : 'Failed to save plan');
+    }
+    if (data.plan) applyPlanUpdate(data.plan, data.mode);
+    showPlanDockExpanded();
+    return data;
+}
+
+function hasPendingPlan() {
+    return !!(currentPlan && currentPlan.status === 'pending');
+}
+
+function maybeAttachPlanDraftActions(messageDiv, content, agentId) {
+    if (!messageDiv || !content) return;
+    if ((agentId || KIT_AGENT_ID) !== KIT_AGENT_ID && currentAgentId !== KIT_AGENT_ID) return;
+    if (currentMode !== 'dm') return;
+    if (!looksLikePlanDraft(content)) return;
+    // If a real pending plan already exists, the dock has Approve/Revise.
+    if (hasPendingPlan()) return;
+    if (messageDiv.querySelector('.plan-draft-actions')) return;
+
+    const body = messageDiv.querySelector('.message-body');
+    if (!body) return;
+
+    const bar = document.createElement('div');
+    bar.className = 'plan-draft-actions';
+    bar.innerHTML = `
+        <div class="plan-draft-actions-label">Kit described a plan but didn’t save it. Capture it here:</div>
+        <div class="plan-draft-actions-buttons">
+            <button type="button" class="btn btn-primary" data-draft-action="approve">Approve</button>
+            <button type="button" class="btn btn-secondary" data-draft-action="edit">Edit</button>
+            <button type="button" class="btn btn-secondary" data-draft-action="reject">Reject</button>
+            <button type="button" class="btn btn-secondary" data-draft-action="save">Save only</button>
+        </div>
+        <div class="plan-draft-edit-form" hidden>
+            <textarea class="plan-draft-feedback" placeholder="What should change before saving?"></textarea>
+            <div class="plan-draft-actions-buttons">
+                <button type="button" class="btn btn-primary" data-draft-action="edit-submit">Save revised plan</button>
+                <button type="button" class="btn btn-secondary" data-draft-action="edit-cancel">Cancel</button>
+            </div>
+        </div>
+        <div class="plan-draft-error" hidden></div>
+    `;
+    body.appendChild(bar);
+
+    const errEl = bar.querySelector('.plan-draft-error');
+    const editForm = bar.querySelector('.plan-draft-edit-form');
+    const setErr = (msg) => {
+        if (!errEl) return;
+        if (msg) { errEl.hidden = false; errEl.textContent = msg; }
+        else { errEl.hidden = true; errEl.textContent = ''; }
+    };
+    const setBusy = (busy) => {
+        bar.querySelectorAll('button').forEach(b => { b.disabled = busy; });
+    };
+
+    bar.querySelectorAll('[data-draft-action]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const action = btn.dataset.draftAction;
+            if (action === 'edit') {
+                if (editForm) editForm.hidden = false;
+                return;
+            }
+            if (action === 'edit-cancel') {
+                if (editForm) editForm.hidden = true;
+                setErr(null);
+                return;
+            }
+
+            let apiAction = 'present';
+            if (action === 'approve') apiAction = 'approve';
+            else if (action === 'reject') apiAction = 'reject';
+            else if (action === 'save' || action === 'edit-submit') apiAction = 'present';
+
+            let text = content;
+            if (action === 'edit-submit') {
+                const feedback = bar.querySelector('.plan-draft-feedback')?.value?.trim() || '';
+                if (feedback) {
+                    text = `${content}\n\n## User revision notes\n\n- ${feedback}`;
+                }
+            }
+
+            setBusy(true);
+            setErr(null);
+            try {
+                const response = await apiFetch(`${API_BASE}/plans/from-chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        platform: PLATFORM,
+                        user_id: USER_ID,
+                        text,
+                        action: apiAction,
+                    }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(typeof data.detail === 'string' ? data.detail : 'Failed to capture plan');
+                }
+                if (data.plan) applyPlanUpdate(data.plan, data.mode);
+                bar.remove();
+                showPlanDockExpanded();
+            } catch (e) {
+                setErr(e.message || String(e));
+            } finally {
+                setBusy(false);
+            }
+        });
+    });
 }
 
 const EMOJI_PALETTE = [
@@ -2158,10 +2314,446 @@ function updateDefaultTeamBtnVisibility() {
     defaultTeamBtn.innerHTML = '<i class="fas fa-users"></i> Create default team';
 }
 
+// --- Plans UI (in-chat card + Plans panel) ---
+
+let currentPlan = null;
+let currentPlanMode = 'plan';
+let planActionInFlight = false;
+let planDriveStarting = false;
+let chatPlanCardEl = null;
+
+const PLAN_ACTION_TOOLS = new Set([
+    'plan_present', 'plan_revise', 'plan_get', 'plan_approve',
+    'plan_step_update', 'plan_complete', 'plan_reject', 'plan_cancel',
+]);
+
+function planReadyStepIds(plan) {
+    if (!plan || !Array.isArray(plan.steps)) return new Set();
+    const done = new Set(
+        plan.steps.filter(s => s.status === 'done').map(s => s.id)
+    );
+    const ready = new Set();
+    for (const step of plan.steps) {
+        const status = step.status || 'pending';
+        if (status !== 'pending' && status !== 'needs_clarification') continue;
+        const deps = step.depends_on || [];
+        if (deps.every(d => done.has(d))) ready.add(step.id);
+    }
+    return ready;
+}
+
+function planRunningStep(plan) {
+    if (!plan || !Array.isArray(plan.steps)) return null;
+    return plan.steps.find(s => s.status === 'running') || null;
+}
+
+function planIsActivelyRunning(plan) {
+    if (!plan) return false;
+    if (planDriveStarting || planActionInFlight) return true;
+    return !!planRunningStep(plan);
+}
+
+function planShouldShowResume(plan) {
+    if (!plan) return false;
+    const status = plan.status || 'pending';
+    if (!['approved', 'running', 'blocked'].includes(status)) return false;
+    if (planIsActivelyRunning(plan)) return false;
+    if (status === 'blocked') return true;
+    return planReadyStepIds(plan).size > 0;
+}
+
+function planStatusHint(plan) {
+    if (!plan) return '';
+    const status = plan.status || 'pending';
+    if (status === 'pending') {
+        return 'Review the plan below. Nothing runs until you click Approve & run.';
+    }
+    if (planIsActivelyRunning(plan)) {
+        const step = planRunningStep(plan);
+        if (step) {
+            const busy = agentStatuses?.[step.agent_id]?.status === 'busy';
+            return `Working: **${step.agent_id}** — ${step.action || 'in progress'}${busy ? ' (busy)' : ''}. No action needed.`;
+        }
+        return 'Starting work on the plan…';
+    }
+    if (status === 'blocked') {
+        const blocked = (plan.steps || []).find(s => s.status === 'needs_clarification');
+        if (blocked?.clarification) {
+            return `Paused — needs your input: ${blocked.clarification}`;
+        }
+        return 'Paused — reply in chat, then click Resume.';
+    }
+    if (planShouldShowResume(plan)) {
+        return 'Work stopped early. Click Resume to run the next ready step.';
+    }
+    if (status === 'completed') {
+        return plan.summary || 'All steps finished.';
+    }
+    if (status === 'failed') {
+        return plan.failure || 'A step failed. Cancel or ask Kit for a new plan.';
+    }
+    return '';
+}
+
+function renderPlanCardHtml(plan) {
+    if (!plan) {
+        return '<p class="empty-state">No active plan</p>';
+    }
+    const status = plan.status || 'pending';
+    const ready = planReadyStepIds(plan);
+    const steps = (plan.steps || []).map(step => {
+        const st = step.status || 'pending';
+        const isReady = ready.has(step.id);
+        const busy = agentStatuses?.[step.agent_id]?.status === 'busy';
+        const busyNote = busy && (st === 'running' || isReady) ? ' · agent busy' : '';
+        return `
+            <li class="plan-step status-${escapeHtml(st)}${isReady ? ' ready' : ''}">
+                <span class="plan-step-marker" aria-hidden="true"></span>
+                <div>
+                    <div class="plan-step-agent">${escapeHtml(step.agent_id)}</div>
+                    <div class="plan-step-action">${escapeHtml(step.action || '')}</div>
+                    <div class="plan-step-status">${escapeHtml(st)}${busyNote}</div>
+                </div>
+            </li>`;
+    }).join('');
+
+    let actions = '';
+    let reviseForm = '';
+    const hint = planStatusHint(plan);
+    if (status === 'pending') {
+        actions = `
+            <button type="button" class="btn btn-primary plan-action" data-plan-action="approve">Approve &amp; run</button>
+            <button type="button" class="btn btn-secondary plan-action" data-plan-action="revise">Revise</button>
+            <button type="button" class="btn btn-secondary plan-action" data-plan-action="reject">Reject</button>`;
+        reviseForm = `
+            <div class="plan-revise-form" hidden>
+                <textarea class="plan-revise-feedback" placeholder="What should change?"></textarea>
+                <div class="plan-revise-form-actions">
+                    <button type="button" class="btn btn-primary plan-action" data-plan-action="revise-submit">Submit revision</button>
+                    <button type="button" class="btn btn-secondary plan-action" data-plan-action="revise-cancel">Cancel</button>
+                </div>
+            </div>`;
+    } else if (['approved', 'running', 'blocked'].includes(status)) {
+        if (planShouldShowResume(plan)) {
+            actions = `
+                <button type="button" class="btn btn-primary plan-action" data-plan-action="continue">Resume</button>
+                <button type="button" class="btn btn-secondary plan-action" data-plan-action="cancel">Cancel work</button>`;
+        } else if (planIsActivelyRunning(plan)) {
+            actions = `
+                <button type="button" class="btn btn-secondary plan-action" data-plan-action="cancel">Cancel work</button>`;
+        } else {
+            actions = `
+                <button type="button" class="btn btn-secondary plan-action" data-plan-action="cancel">Cancel work</button>`;
+        }
+    } else if (status === 'failed') {
+        actions = `
+            <button type="button" class="btn btn-secondary plan-action" data-plan-action="cancel">Cancel work</button>`;
+    }
+
+    const hintHtml = hint
+        ? `<div class="plan-status-hint">${renderMarkdown(hint)}</div>`
+        : '';
+
+    return `
+        <div class="plan-card" data-plan-id="${escapeHtml(plan.id)}">
+            <div class="plan-card-header">
+                <div>
+                    <div class="plan-card-goal">${escapeHtml(plan.goal || 'Untitled plan')}</div>
+                    <div class="plan-card-meta">Plan id: ${escapeHtml(plan.id)}</div>
+                </div>
+                <span class="plan-status-badge status-${escapeHtml(status)}">${escapeHtml(status)}</span>
+            </div>
+            ${hintHtml}
+            <ul class="plan-steps">${steps || '<li class="empty-state">No steps</li>'}</ul>
+            <div class="plan-card-actions">${actions}</div>
+            ${reviseForm}
+            <div class="plan-card-error" hidden></div>
+        </div>`;
+}
+
+function bindPlanCardActions(root) {
+    if (!root) return;
+    root.querySelectorAll('.plan-action').forEach(btn => {
+        btn.addEventListener('click', () => handlePlanAction(btn.dataset.planAction, root));
+    });
+}
+
+function setPlanCardBusy(root, busy) {
+    planActionInFlight = busy;
+    root?.querySelectorAll('.plan-action').forEach(btn => {
+        btn.disabled = busy;
+    });
+}
+
+function showPlanCardError(root, message) {
+    const el = root?.querySelector('.plan-card-error');
+    if (!el) return;
+    if (message) {
+        el.hidden = false;
+        el.textContent = message;
+    } else {
+        el.hidden = true;
+        el.textContent = '';
+    }
+}
+
+async function handlePlanAction(action, root) {
+    const planId = root?.dataset?.planId || currentPlan?.id;
+    if (!planId) return;
+
+    if (action === 'revise') {
+        const form = root.querySelector('.plan-revise-form');
+        if (form) form.hidden = false;
+        return;
+    }
+    if (action === 'revise-cancel') {
+        const form = root.querySelector('.plan-revise-form');
+        if (form) form.hidden = true;
+        showPlanCardError(root, null);
+        return;
+    }
+
+    const body = { platform: PLATFORM, user_id: USER_ID };
+    let path = '';
+    if (action === 'approve') path = `/plans/${encodeURIComponent(planId)}/approve`;
+    else if (action === 'reject') path = `/plans/${encodeURIComponent(planId)}/reject`;
+    else if (action === 'cancel') path = `/plans/${encodeURIComponent(planId)}/cancel`;
+    else if (action === 'continue') path = `/plans/${encodeURIComponent(planId)}/continue`;
+    else if (action === 'revise-submit') {
+        const feedback = root.querySelector('.plan-revise-feedback')?.value?.trim() || '';
+        if (!feedback) {
+            showPlanCardError(root, 'Enter feedback for the revision.');
+            return;
+        }
+        body.feedback = feedback;
+        path = `/plans/${encodeURIComponent(planId)}/revise`;
+    } else {
+        return;
+    }
+
+    setPlanCardBusy(root, true);
+    showPlanCardError(root, null);
+    if (action === 'approve') {
+        planDriveStarting = true;
+        refreshPlanCardUi();
+    }
+    try {
+        const response = await apiFetch(`${API_BASE}${path}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const detail = data.detail;
+            const msg = typeof detail === 'string'
+                ? detail
+                : (data.error || `Request failed (${response.status})`);
+            throw new Error(msg);
+        }
+        if (data.plan) applyPlanUpdate(data.plan, data.mode);
+        if (action === 'approve' && data.plan?.status !== 'pending') {
+            planDriveStarting = true;
+        }
+        if (action === 'revise-submit') {
+            const form = root.querySelector('.plan-revise-form');
+            if (form) form.hidden = true;
+            closeWorkspacePanel();
+            selectMember(KIT_AGENT_ID);
+        }
+    } catch (err) {
+        showPlanCardError(root, err.message || String(err));
+    } finally {
+        setPlanCardBusy(root, false);
+        if (action === 'approve' && !planRunningStep(currentPlan)) {
+            // Keep "Starting…" until a step is running or drive finishes.
+            window.setTimeout(() => {
+                if (!planRunningStep(currentPlan)) planDriveStarting = false;
+                refreshPlanCardUi();
+            }, 8000);
+        }
+        refreshPlanCardUi();
+    }
+}
+
+function refreshPlanCardUi() {
+    if (!currentPlan) return;
+    updateChatPlanCard(currentPlan);
+    if (currentWorkspaceTab === 'plans') updatePlansPanel(currentPlan);
+}
+
+// Keep completed/cancelled/rejected visible — hiding them made plans feel like they vanished.
+const ACTIVE_PLAN_STATUSES = new Set([
+    'pending', 'approved', 'running', 'blocked', 'failed',
+    'completed', 'cancelled', 'rejected',
+]);
+
+const chatPlanDock = document.getElementById('chat-plan-dock');
+const chatPlanDockBody = document.getElementById('chat-plan-dock-body');
+const chatPlanDockSummary = document.getElementById('chat-plan-dock-summary');
+const chatPlanDockToggle = document.getElementById('chat-plan-dock-toggle');
+const viewPlanBtn = document.getElementById('view-plan-btn');
+let planDockDismissedByUser = false;
+let lastPlanDockPlanId = null;
+
+function planDockVisibleFor(plan) {
+    return !!(plan && ACTIVE_PLAN_STATUSES.has(plan.status || 'pending'));
+}
+
+function isPlanDockShownInChat() {
+    return !!(
+        chatPlanDock
+        && currentPlan
+        && planDockVisibleFor(currentPlan)
+        && !chatPlanDock.hidden
+    );
+}
+
+function syncPlanHeaderButton() {
+    if (!viewPlanBtn) return;
+    const isOpen = isPlanDockShownInChat();
+    viewPlanBtn.classList.toggle('is-open', isOpen);
+    viewPlanBtn.title = isOpen
+        ? 'Hide plan'
+        : (currentPlan?.goal || 'Show plan');
+    viewPlanBtn.setAttribute('aria-expanded', String(isOpen));
+}
+
+function showPlanDockInChat() {
+    if (!chatPlanDock || !currentPlan || !planDockVisibleFor(currentPlan)) return;
+    planDockDismissedByUser = false;
+    chatPlanDock.hidden = false;
+    chatPlanDock.classList.remove('collapsed');
+    if (chatPlanDockToggle) chatPlanDockToggle.setAttribute('aria-expanded', 'true');
+    syncPlanHeaderButton();
+}
+
+function hidePlanDockInChat() {
+    if (!chatPlanDock) return;
+    planDockDismissedByUser = true;
+    chatPlanDock.hidden = true;
+    syncPlanHeaderButton();
+}
+
+function togglePlanDockInChat() {
+    if (!currentPlan || !planDockVisibleFor(currentPlan)) {
+        openWorkspacePanel('plans');
+        return;
+    }
+    if (isPlanDockShownInChat()) {
+        hidePlanDockInChat();
+    } else {
+        showPlanDockInChat();
+        chatPlanDock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+function updateChatPlanCard(plan) {
+    // Remove legacy in-scroll card if present from older sessions.
+    document.getElementById('chat-plan-card-wrap')?.remove();
+
+    if (!chatPlanDock || !chatPlanDockBody) return;
+
+    if (!planDockVisibleFor(plan)) {
+        chatPlanDock.hidden = true;
+        chatPlanDockBody.innerHTML = '';
+        chatPlanCardEl = null;
+        planDockDismissedByUser = false;
+        lastPlanDockPlanId = null;
+        if (viewPlanBtn) viewPlanBtn.hidden = true;
+        syncPlanHeaderButton();
+        return;
+    }
+
+    // New plan → show dock; same plan → respect user's hide/show choice.
+    if (plan.id !== lastPlanDockPlanId) {
+        lastPlanDockPlanId = plan.id;
+        planDockDismissedByUser = false;
+    }
+
+    const status = plan.status || 'pending';
+    const done = (plan.steps || []).filter(s => s.status === 'done').length;
+    const total = (plan.steps || []).length;
+    if (chatPlanDockSummary) {
+        chatPlanDockSummary.textContent =
+            `Plan · ${status} · ${done}/${total} steps · ${plan.goal || plan.id}`;
+    }
+    chatPlanDockBody.innerHTML = renderPlanCardHtml(plan);
+    chatPlanCardEl = chatPlanDockBody.querySelector('.plan-card');
+    if (chatPlanCardEl) {
+        chatPlanCardEl.id = 'chat-plan-card';
+        bindPlanCardActions(chatPlanCardEl);
+    }
+    chatPlanDock.hidden = planDockDismissedByUser;
+    if (viewPlanBtn) viewPlanBtn.hidden = false;
+    syncPlanHeaderButton();
+}
+
+function showPlanDockExpanded() {
+    showPlanDockInChat();
+}
+
+if (chatPlanDockToggle) {
+    chatPlanDockToggle.addEventListener('click', () => {
+        if (chatPlanDock.hidden) {
+            showPlanDockInChat();
+            return;
+        }
+        const collapsed = chatPlanDock.classList.toggle('collapsed');
+        chatPlanDockToggle.setAttribute('aria-expanded', String(!collapsed));
+        syncPlanHeaderButton();
+    });
+}
+if (viewPlanBtn) {
+    viewPlanBtn.addEventListener('click', togglePlanDockInChat);
+}
+
+function updatePlansPanel(plan) {
+    const body = document.getElementById('plans-panel-body');
+    if (!body) return;
+    body.innerHTML = renderPlanCardHtml(plan);
+    const card = body.querySelector('.plan-card');
+    if (card) bindPlanCardActions(card);
+}
+
+function applyPlanUpdate(plan, mode) {
+    currentPlan = plan || null;
+    if (mode) currentPlanMode = mode;
+    if (planRunningStep(currentPlan) || currentPlan?.status === 'completed') {
+        planDriveStarting = false;
+    }
+    updateChatPlanCard(currentPlan);
+    if (currentWorkspaceTab === 'plans' || document.getElementById('plans-panel-body')) {
+        updatePlansPanel(currentPlan);
+    }
+}
+
+async function loadCurrentPlan() {
+    try {
+        const response = await apiFetch(
+            `${API_BASE}/plans/current?platform=${encodeURIComponent(PLATFORM)}&user_id=${encodeURIComponent(USER_ID)}`
+        );
+        if (!response.ok) throw new Error('Failed to load plan');
+        const data = await response.json();
+        applyPlanUpdate(data.plan, data.mode);
+    } catch (err) {
+        const body = document.getElementById('plans-panel-body');
+        if (body) body.innerHTML = `<p class="empty-state">Error: ${escapeHtml(err.message)}</p>`;
+    }
+}
+
+function loadPlansPanel() {
+    loadCurrentPlan();
+}
+
+const refreshPlansBtn = document.getElementById('refresh-plans');
+if (refreshPlansBtn) refreshPlansBtn.addEventListener('click', loadCurrentPlan);
+
 // --- Workspace overlay: Team Activity / Schedules ---
 // Workspace-wide sections that aren't tied to any one team member.
 
 const WORKSPACE_LOADERS = {
+    plans: loadPlansPanel,
     activity: loadActivity,
     schedules: loadSchedules,
     'custom-tools': loadCustomToolsLibrary,
@@ -3331,7 +3923,12 @@ function handleWebSocketMessage(data) {
             if (isOwnSession && streamingContentDiv) {
                 resetStreamTimeout();
                 streamingText += data.content;
-                streamingContentDiv.innerHTML = renderMarkdown(streamingText);
+                // gpt-oss sometimes streams plan JSON — hide until stream_end converts it.
+                if (looksLikePlanJson(streamingText) || /^\s*\{\s*"(?:goal|plan)"\s*:/.test(streamingText.trim())) {
+                    streamingContentDiv.innerHTML = renderMarkdown('Preparing plan…');
+                } else {
+                    streamingContentDiv.innerHTML = renderMarkdown(streamingText);
+                }
                 scrollChatToBottom();
             }
             break;
@@ -3360,13 +3957,27 @@ function handleWebSocketMessage(data) {
                         `✓ ${data.tool_name}`;
                     const resultDiv = document.createElement('div');
                     resultDiv.className = 'tool-call-result';
-                    const preview = data.result.length > 300
-                        ? data.result.slice(0, 300) + '...'
-                        : data.result;
+                    // Plan tools render as the structured card; keep tool bubble short.
+                    const preview = PLAN_ACTION_TOOLS.has(data.tool_name)
+                        ? 'Plan updated — see card below'
+                        : (data.result.length > 300
+                            ? data.result.slice(0, 300) + '...'
+                            : data.result);
                     resultDiv.textContent = preview;
                     running.appendChild(resultDiv);
                     scrollChatToBottom();
                 }
+            }
+            if (PLAN_ACTION_TOOLS.has(data.tool_name)) {
+                loadCurrentPlan();
+            }
+            break;
+
+        case 'plan_updated':
+            if (data.plan !== undefined) {
+                applyPlanUpdate(data.plan, data.mode);
+            } else {
+                loadCurrentPlan();
             }
             break;
 
@@ -3378,6 +3989,36 @@ function handleWebSocketMessage(data) {
 
         case 'stream_end':
             if (isOwnSession) {
+                // Never leave a blank bubble that looks like Kit is still working.
+                let endContent = typeof data.content === 'string' ? data.content : streamingText;
+                if (!(endContent || '').trim()) {
+                    endContent = 'I finished processing but produced an empty reply. Please try sending your message again.';
+                }
+                const rawContent = endContent;
+                const jsonBlob = looksLikePlanJson(rawContent) ? rawContent.trim() : null;
+                // Replace with server-cleaned final text (strips think tags /
+                // Harmony tool-call tokens that may have leaked mid-stream).
+                if (streamingContentDiv) {
+                    if (jsonBlob) {
+                        streamingText = 'Saving plan…';
+                        streamingContentDiv.innerHTML = renderMarkdown(streamingText);
+                        capturePlanJsonBlob(jsonBlob).then(() => {
+                            if (streamingContentDiv) {
+                                streamingText = '**Plan ready** — use the plan dock to approve, revise, or reject.';
+                                streamingContentDiv.innerHTML = renderMarkdown(streamingText);
+                            }
+                        }).catch((err) => {
+                            if (streamingContentDiv) {
+                                streamingText = `Could not save plan: ${err.message}`;
+                                streamingContentDiv.innerHTML = renderMarkdown(streamingText);
+                            }
+                        });
+                    } else {
+                        // Keep the full plan markdown in chat — do not replace it with a stub.
+                        streamingText = endContent;
+                        streamingContentDiv.innerHTML = renderMarkdown(streamingText);
+                    }
+                }
                 if (streamingMessageDiv) {
                     streamingMessageDiv.classList.remove('streaming');
                     const body = streamingMessageDiv.querySelector('.message-body');
@@ -3395,6 +4036,11 @@ function handleWebSocketMessage(data) {
                         reactionsDiv.appendChild(addReactionBtn);
                         body.appendChild(reactionsDiv);
                     }
+                    maybeAttachPlanDraftActions(
+                        streamingMessageDiv,
+                        rawContent,
+                        data.agent_id || currentAgentId
+                    );
                 }
                 if (data.message_count) {
                     messageCount = data.message_count;
@@ -3407,7 +4053,11 @@ function handleWebSocketMessage(data) {
         case 'stream_error':
             if (isOwnSession) {
                 removeThinkingIndicator();
-                addMessage(`Error: ${data.error}`, 'system');
+                const err = data.error || 'Unknown error';
+                addMessage(
+                    err === 'Cancelled' ? 'Work cancelled.' : `Error: ${err}`,
+                    'system'
+                );
                 finishStreaming();
             }
             break;
@@ -3423,11 +4073,11 @@ function handleWebSocketMessage(data) {
             break;
 
         case 'assistant_message':
-            if (isOwnSession && data.via_delegation) {
-                // A delegated task's reply - the normal chat flow already
-                // renders replies via stream_end, so only delegation needs
-                // this (the human never sent that turn from this tab).
-                addMessage(data.message, 'assistant');
+            if (isOwnSession && (data.via_delegation || data.source === 'system_note')) {
+                // Delegated replies and plan-drive notes have no stream_end
+                // on this tab — show them. Normal chat already rendered via
+                // stream_end, so bare assistant_message is ignored here.
+                addMessage(data.message, 'assistant', null, null, data.agent_id || null);
             } else if (!isOwnSession) {
                 addMessage(`[${data.session_id}] ${data.message}`, 'assistant');
             }
@@ -3514,6 +4164,8 @@ async function loadChatHistory() {
     } catch (error) {
         console.error('Failed to load chat history:', error);
     }
+    // Keep pinned plan dock in sync after history wipe.
+    if (currentPlan) updateChatPlanCard(currentPlan);
 }
 
 function promptForAuthToken() {
@@ -3560,6 +4212,7 @@ async function init() {
 
     if (connected) {
         await loadAgents();
+        await loadCurrentPlan();
 
         const urlState = parseChatUrl();
         if (urlState) {

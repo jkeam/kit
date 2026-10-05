@@ -25,10 +25,25 @@ def registry(tmp_path):
     return AgentRegistry(workspace_dir=str(workspace), templates_dir=str(templates))
 
 
-def test_kit_is_synthesized_with_full_access(registry):
+def test_kit_manager_tools_are_registered():
+    from runtime.agents import KIT_MANAGER_TOOLS
+    from tools.core import TOOLS
+
+    known = {t["function"]["name"] for t in TOOLS}
+    assert set(KIT_MANAGER_TOOLS) <= known
+
+
+def test_kit_is_synthesized_as_plan_mode_manager(registry):
+    from runtime.agents import KIT_PLAN_TOOLS
+
     kit = registry.resolve(KIT_AGENT_ID)
     assert kit is not None
-    assert kit.allowed_tools is None
+    assert kit.allowed_tools == set(KIT_PLAN_TOOLS)
+    assert "write" not in kit.allowed_tools
+    assert "exec_shell" not in kit.allowed_tools
+    assert "agent_delegate" not in kit.allowed_tools
+    assert "plan_present" in kit.allowed_tools
+    assert "plan_approve" in kit.allowed_tools
     assert kit.allowed_skills is None
 
 

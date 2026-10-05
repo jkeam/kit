@@ -37,6 +37,21 @@ from gateway.scheduler import run_scheduler
 from gateway.dreamer import run_dream_cycle, list_dreams, get_dream
 from runtime.memory import MemoryManager
 from runtime.agent import OPENAI_COMPATIBLE_PROVIDERS
+from runtime.agents import KIT_AGENT_ID
+from tools.plan import (
+    extract_plan_from_model_output,
+    latest_plan,
+    load_plan,
+    plan_approve,
+    plan_cancel,
+    plan_complete,
+    plan_present,
+    plan_reject,
+    plan_step_update,
+    ready_steps,
+    sanitize_plan_dependencies,
+    save_plan,
+)
 
 
 def _require_gateway_token(authorization: Optional[str] = Header(default=None)) -> None:
@@ -143,6 +158,25 @@ class SessionStats(BaseModel):
     created_at: str
     last_active: str
     message_count: int
+    mode: str = "plan"
+    active_plan_id: Optional[str] = None
+
+
+class PlanActionRequest(BaseModel):
+    """Common body for plan approve/reject/revise/cancel."""
+    platform: str = "web"
+    user_id: str = "anonymous"
+    reason: Optional[str] = None
+    feedback: Optional[str] = None
+
+
+class PlanFromChatRequest(BaseModel):
+    """Formalize a prose/table plan Kit wrote without calling plan_present."""
+    platform: str = "web"
+    user_id: str = "anonymous"
+    text: str
+    action: Literal["present", "approve", "reject"] = "present"
+    reason: Optional[str] = None
 
 
 # Global session manager (initialized on startup)
@@ -503,6 +537,481 @@ async def cleanup_sessions(max_age_minutes: int = 60):
     return {
         "message": f"Cleaned up {removed} inactive sessions",
         "removed_count": removed
+    }
+
+
+# ── Plans API ──────────────────────────────────────────────────────────────
+
+
+async def _broadcast_plan_updated(
+    sm: SessionManager,
+    platform: str,
+    user_id: str,
+    plan: Optional[Dict[str, Any]],
+    mode: str,
+) -> None:
+    await manager.broadcast({
+        "type": "plan_updated",
+        "plan": plan,
+        "mode": mode,
+        "platform": platform,
+        "user_id": user_id,
+        "timestamp": _now(),
+    })
+
+
+async def _kick_kit_turn(platform: str, user_id: str, message: str) -> None:
+    """Run a synthetic Kit chat turn and fan out stream events over WS."""
+    sm = session_manager
+    if not sm:
+        return
+    session_id = make_session_id(platform, user_id, KIT_AGENT_ID)
+    msg_id = str(uuid.uuid4())
+    sm.save_message(session_id, "user", message, message_id=msg_id)
+    await manager.broadcast({
+        "type": "user_message",
+        "session_id": session_id,
+        "platform": platform,
+        "agent_id": KIT_AGENT_ID,
+        "message": message,
+        "message_id": msg_id,
+        "timestamp": _now(),
+    })
+    try:
+        async for event in sm.send_message_stream(
+            platform=platform,
+            user_id=user_id,
+            message=message,
+            agent_id=KIT_AGENT_ID,
+        ):
+            payload = {**event, "session_id": session_id, "timestamp": _now()}
+            await manager.broadcast(payload)
+            if event["type"] == "stream_end":
+                content = event.get("content", "")
+                sm.save_message(session_id, "assistant", content)
+                stats = sm.get_session_stats(session_id)
+                await manager.broadcast({
+                    "type": "assistant_message",
+                    "session_id": session_id,
+                    "platform": platform,
+                    "agent_id": KIT_AGENT_ID,
+                    "message": content,
+                    "message_count": stats["message_count"] if stats else 0,
+                    "timestamp": _now(),
+                })
+                # Refresh plan UI after orchestration progress
+                kit = sm.get_session(platform, user_id, KIT_AGENT_ID)
+                plan = None
+                if kit.active_plan_id:
+                    plan = load_plan(kit.active_plan_id, str(kit.agent.workspace_dir))
+                if plan is None:
+                    plan = latest_plan(
+                        str(kit.agent.workspace_dir),
+                        statuses=["pending", "approved", "running", "blocked", "failed", "cancelled", "completed"],
+                    )
+                await _broadcast_plan_updated(sm, platform, user_id, plan, kit.mode)
+            elif event["type"] == "tool_call_result" and str(
+                event.get("tool_name", "")
+            ).startswith("plan_"):
+                kit = sm.get_session(platform, user_id, KIT_AGENT_ID)
+                plan = None
+                if kit.active_plan_id:
+                    plan = load_plan(kit.active_plan_id, str(kit.agent.workspace_dir))
+                if plan is None:
+                    plan = latest_plan(str(kit.agent.workspace_dir))
+                await _broadcast_plan_updated(sm, platform, user_id, plan, kit.mode)
+    except asyncio.CancelledError:
+        await manager.broadcast({
+            "type": "stream_error",
+            "session_id": session_id,
+            "error": "Cancelled",
+            "timestamp": _now(),
+        })
+    except Exception as e:
+        await manager.broadcast({
+            "type": "stream_error",
+            "session_id": session_id,
+            "error": str(e),
+            "timestamp": _now(),
+        })
+
+
+def _kit_session_workspace(sm: SessionManager, platform: str, user_id: str):
+    session = sm.get_session(platform, user_id, KIT_AGENT_ID)
+    return session, str(session.agent.workspace_dir)
+
+
+@app.get("/plans/current", dependencies=[Depends(_require_gateway_token)])
+async def get_current_plan(platform: str = "web", user_id: str = "anonymous"):
+    """Active/latest plan for Kit's workspace plus session mode."""
+    sm = _require_session_manager()
+    session, workspace = _kit_session_workspace(sm, platform, user_id)
+    plan = None
+    if session.active_plan_id:
+        plan = load_plan(session.active_plan_id, workspace)
+    if plan is None:
+        plan = latest_plan(
+            workspace,
+            statuses=[
+                "pending", "approved", "running", "blocked", "failed",
+                "completed", "cancelled", "rejected",
+            ],
+        )
+    if plan is None:
+        plan = latest_plan(workspace)
+    return {"plan": plan, "mode": session.mode, "active_plan_id": session.active_plan_id}
+
+
+@app.get("/plans/{plan_id}", dependencies=[Depends(_require_gateway_token)])
+async def get_plan(plan_id: str, platform: str = "web", user_id: str = "anonymous"):
+    sm = _require_session_manager()
+    session, workspace = _kit_session_workspace(sm, platform, user_id)
+    plan = load_plan(plan_id, workspace)
+    if not plan:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+    return {"plan": plan, "mode": session.mode}
+
+
+@app.post("/plans/{plan_id}/approve", dependencies=[Depends(_require_gateway_token)])
+async def approve_plan(plan_id: str, request: PlanActionRequest):
+    sm = _require_session_manager()
+    session, workspace = _kit_session_workspace(sm, request.platform, request.user_id)
+    result = plan_approve(plan_id=plan_id, workspace_dir=workspace)
+    if result.startswith("Error"):
+        raise HTTPException(status_code=400, detail=result)
+    session.agent._apply_plan_tool_side_effects("plan_approve", result)
+    plan = load_plan(plan_id, workspace)
+    await _broadcast_plan_updated(sm, request.platform, request.user_id, plan, session.mode)
+    # Drive steps in-process — gpt-oss often won't call agent_delegate reliably.
+    asyncio.create_task(
+        _drive_plan_steps(sm, request.platform, request.user_id, plan_id)
+    )
+    return {"ok": True, "plan": plan, "mode": session.mode}
+
+
+@app.post("/plans/{plan_id}/reject", dependencies=[Depends(_require_gateway_token)])
+async def reject_plan(plan_id: str, request: PlanActionRequest):
+    sm = _require_session_manager()
+    session, workspace = _kit_session_workspace(sm, request.platform, request.user_id)
+    result = plan_reject(
+        plan_id=plan_id, reason=request.reason, workspace_dir=workspace
+    )
+    if result.startswith("Error"):
+        raise HTTPException(status_code=400, detail=result)
+    session.agent._apply_plan_tool_side_effects("plan_reject", result)
+    plan = load_plan(plan_id, workspace)
+    await _broadcast_plan_updated(sm, request.platform, request.user_id, plan, session.mode)
+    return {"ok": True, "plan": plan, "mode": session.mode}
+
+
+@app.post("/plans/{plan_id}/revise", dependencies=[Depends(_require_gateway_token)])
+async def revise_plan(plan_id: str, request: PlanActionRequest):
+    """Inject a Kit chat turn so Kit owns plan_revise from user feedback."""
+    sm = _require_session_manager()
+    session, workspace = _kit_session_workspace(sm, request.platform, request.user_id)
+    plan = load_plan(plan_id, workspace)
+    if not plan:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+    if plan.get("status") != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Plan is {plan.get('status')}, only pending plans can be revised",
+        )
+    feedback = (request.feedback or "").strip()
+    if not feedback:
+        raise HTTPException(status_code=400, detail="feedback is required")
+    msg = (
+        f"Revise the plan `{plan_id}` based on this feedback, then call plan_revise "
+        f"and show the updated plan. Feedback: {feedback}"
+    )
+    asyncio.create_task(_kick_kit_turn(request.platform, request.user_id, msg))
+    return {"ok": True, "plan": plan, "mode": session.mode, "revising": True}
+
+
+@app.post("/plans/{plan_id}/cancel", dependencies=[Depends(_require_gateway_token)])
+async def cancel_plan(plan_id: str, request: PlanActionRequest):
+    """Hard-abort in-flight turns and mark the plan cancelled."""
+    sm = _require_session_manager()
+    session, workspace = _kit_session_workspace(sm, request.platform, request.user_id)
+    await sm.cancel_runs_for_user(request.platform, request.user_id)
+    result = plan_cancel(
+        plan_id=plan_id, reason=request.reason or "Cancelled by user", workspace_dir=workspace
+    )
+    if result.startswith("Error"):
+        raise HTTPException(status_code=400, detail=result)
+    session.agent._apply_plan_tool_side_effects("plan_cancel", result)
+    plan = load_plan(plan_id, workspace)
+    await _broadcast_plan_updated(sm, request.platform, request.user_id, plan, session.mode)
+    await manager.broadcast({
+        "type": "stream_error",
+        "session_id": make_session_id(request.platform, request.user_id, KIT_AGENT_ID),
+        "error": "Cancelled",
+        "timestamp": _now(),
+    })
+    return {"ok": True, "plan": plan, "mode": session.mode}
+
+
+async def _post_kit_system_note(
+    sm: SessionManager, platform: str, user_id: str, text: str
+) -> None:
+    """Persist + broadcast a Kit assistant note (progress without an LLM turn)."""
+    session_id = make_session_id(platform, user_id, KIT_AGENT_ID)
+    sm.save_message(session_id, "assistant", text)
+    await manager.broadcast({
+        "type": "assistant_message",
+        "session_id": session_id,
+        "platform": platform,
+        "agent_id": KIT_AGENT_ID,
+        "message": text,
+        # UI skips own-session assistant_message after stream_end (already
+        # rendered). system_note has no stream — must opt in for live display.
+        "source": "system_note",
+        "timestamp": _now(),
+    })
+
+
+async def _drive_plan_steps(
+    sm: SessionManager,
+    platform: str,
+    user_id: str,
+    plan_id: str,
+    *,
+    max_steps: int = 20,
+) -> None:
+    """Deterministically run ready plan steps via agent_delegate (no Kit LLM).
+
+    gpt-oss often returns empty / Harmony junk instead of tool calls; Continue
+    must not depend on the model cooperating.
+    """
+    session, workspace = _kit_session_workspace(sm, platform, user_id)
+    if session.mode != "orchestrate":
+        session.agent._set_mode("orchestrate", plan_id=plan_id)
+
+    await _post_kit_system_note(
+        sm, platform, user_id,
+        f"Approved — starting work on plan `{plan_id}`.",
+    )
+
+    for _ in range(max_steps):
+        if session.cancel_requested.is_set():
+            await _post_kit_system_note(
+                sm, platform, user_id, "Plan drive stopped (cancelled)."
+            )
+            break
+
+        plan = load_plan(plan_id, workspace)
+        if not plan or plan.get("status") not in ("approved", "running", "blocked"):
+            break
+
+        if sanitize_plan_dependencies(plan):
+            save_plan(plan, workspace)
+            await _broadcast_plan_updated(sm, platform, user_id, plan, session.mode)
+
+        ready = ready_steps(plan)
+        if not ready:
+            unfinished = [
+                s["id"] for s in plan.get("steps", []) if s.get("status") != "done"
+            ]
+            if not unfinished:
+                result = plan_complete(
+                    plan_id=plan_id,
+                    summary="All steps completed.",
+                    workspace_dir=workspace,
+                )
+                if not result.startswith("Error"):
+                    session.agent._apply_plan_tool_side_effects("plan_complete", result)
+                plan = load_plan(plan_id, workspace)
+                await _broadcast_plan_updated(sm, platform, user_id, plan, session.mode)
+                await _post_kit_system_note(
+                    sm, platform, user_id,
+                    f"Plan `{plan_id}` completed — all steps done.",
+                )
+            else:
+                await _post_kit_system_note(
+                    sm, platform, user_id,
+                    "No step is ready to run (waiting on other steps or a teammate). "
+                    "Reply in chat, or click Resume if work should continue.",
+                )
+            break
+
+        step = ready[0]
+        step_id = step["id"]
+        agent_id = step["agent_id"]
+        task = (step.get("action") or "").strip()
+        criteria = (step.get("success_criteria") or "").strip()
+        if criteria:
+            task = f"{task}\n\nSuccess criteria: {criteria}"
+
+        plan_step_update(
+            step_id=step_id,
+            status="running",
+            plan_id=plan_id,
+            workspace_dir=workspace,
+        )
+        plan = load_plan(plan_id, workspace)
+        await _broadcast_plan_updated(sm, platform, user_id, plan, session.mode)
+        await _post_kit_system_note(
+            sm, platform, user_id,
+            f"Running step `{step_id}` → **{agent_id}**: {step.get('action', '')}",
+        )
+
+        try:
+            result = await sm.delegate(
+                platform=platform,
+                user_id=user_id,
+                from_agent_id=KIT_AGENT_ID,
+                to_agent_id=agent_id,
+                task=task,
+                depth=1,
+            )
+            status = "done"
+            if str(result).startswith("Error"):
+                status = "failed"
+            plan_step_update(
+                step_id=step_id,
+                status=status,
+                plan_id=plan_id,
+                result=str(result)[:4000],
+                workspace_dir=workspace,
+            )
+        except Exception as e:
+            plan_step_update(
+                step_id=step_id,
+                status="failed",
+                plan_id=plan_id,
+                result=str(e)[:4000],
+                workspace_dir=workspace,
+            )
+            result = str(e)
+            status = "failed"
+
+        plan = load_plan(plan_id, workspace)
+        await _broadcast_plan_updated(sm, platform, user_id, plan, session.mode)
+        # Keep newlines so GFM tables/lists in the teammate reply still render
+        # in chat (flattening to one line turns "| a | b |\n|---|" into noise).
+        body = str(result).strip()
+        if len(body) > 4000:
+            body = body[:3997] + "…"
+        note = f"Step `{step_id}` → **{status}**."
+        if body:
+            note = f"{note}\n\n{body}"
+        await _post_kit_system_note(sm, platform, user_id, note)
+
+        if status == "failed" or (plan and plan.get("status") in ("failed", "blocked", "cancelled")):
+            break
+
+
+@app.post("/plans/from-chat", dependencies=[Depends(_require_gateway_token)])
+async def plan_from_chat(request: PlanFromChatRequest):
+    """Turn Kit's markdown plan prose into a real plan JSON + optional approve/drive."""
+    sm = _require_session_manager()
+    session, workspace = _kit_session_workspace(sm, request.platform, request.user_id)
+    parsed = extract_plan_from_model_output(request.text)
+    if not parsed:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not parse plan from text (expected markdown or JSON)",
+        )
+
+    result = plan_present(
+        goal=parsed["goal"],
+        steps=parsed["steps"],
+        risks=parsed.get("risks"),
+        open_questions=parsed.get("open_questions"),
+        workspace_dir=workspace,
+    )
+    if result.startswith("Error"):
+        raise HTTPException(status_code=400, detail=result)
+    session.agent._apply_plan_tool_side_effects("plan_present", result)
+
+    # Extract new plan id from markdown
+    plan_id = None
+    for line in result.splitlines():
+        if "Plan id:" in line and "`" in line:
+            plan_id = line.split("`")[1]
+            break
+    plan = load_plan(plan_id, workspace) if plan_id else latest_plan(workspace, statuses=["pending"])
+    if not plan:
+        raise HTTPException(status_code=500, detail="Plan was not persisted")
+
+    if request.action == "reject":
+        rej = plan_reject(
+            plan_id=plan["id"],
+            reason=request.reason or "Rejected from chat draft",
+            workspace_dir=workspace,
+        )
+        if not rej.startswith("Error"):
+            session.agent._apply_plan_tool_side_effects("plan_reject", rej)
+        plan = load_plan(plan["id"], workspace)
+        await _broadcast_plan_updated(sm, request.platform, request.user_id, plan, session.mode)
+        await _post_kit_system_note(
+            sm, request.platform, request.user_id,
+            f"Plan `{plan['id']}` rejected.",
+        )
+        return {"ok": True, "plan": plan, "mode": session.mode}
+
+    if request.action == "approve":
+        appr = plan_approve(plan_id=plan["id"], workspace_dir=workspace)
+        if appr.startswith("Error"):
+            raise HTTPException(status_code=400, detail=appr)
+        session.agent._apply_plan_tool_side_effects("plan_approve", appr)
+        plan = load_plan(plan["id"], workspace)
+        await _broadcast_plan_updated(sm, request.platform, request.user_id, plan, session.mode)
+        await _post_kit_system_note(
+            sm, request.platform, request.user_id,
+            f"Plan `{plan['id']}` approved — running ready steps.",
+        )
+        asyncio.create_task(
+            _drive_plan_steps(sm, request.platform, request.user_id, plan["id"])
+        )
+        return {"ok": True, "plan": plan, "mode": session.mode, "approved": True}
+
+    # present only — show dock for edit/approve
+    await _broadcast_plan_updated(sm, request.platform, request.user_id, plan, session.mode)
+    await _post_kit_system_note(
+        sm, request.platform, request.user_id,
+        f"Plan `{plan['id']}` saved. Use the plan dock to Approve, Revise, or Reject.",
+    )
+    return {"ok": True, "plan": plan, "mode": session.mode, "presented": True}
+
+
+@app.post("/plans/{plan_id}/continue", dependencies=[Depends(_require_gateway_token)])
+async def continue_plan(plan_id: str, request: PlanActionRequest):
+    """Resume a stuck plan by running ready steps directly (no Kit LLM)."""
+    sm = _require_session_manager()
+    session, workspace = _kit_session_workspace(sm, request.platform, request.user_id)
+    plan = load_plan(plan_id, workspace)
+    if not plan:
+        raise HTTPException(status_code=404, detail=f"Plan {plan_id} not found")
+    if plan.get("status") not in ("approved", "running", "blocked"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Plan is {plan.get('status')}; only approved/running/blocked plans can continue",
+        )
+    if session.mode != "orchestrate":
+        session.agent._set_mode("orchestrate", plan_id=plan_id)
+    ready = ready_steps(plan)
+    if not ready:
+        unfinished = [
+            s["id"] for s in plan.get("steps", []) if s.get("status") != "done"
+        ]
+        if not unfinished:
+            return {"ok": True, "plan": plan, "mode": session.mode, "message": "Plan already complete"}
+        return {
+            "ok": True,
+            "plan": plan,
+            "mode": session.mode,
+            "message": "No ready steps (waiting on dependencies or clarification)",
+        }
+    asyncio.create_task(
+        _drive_plan_steps(sm, request.platform, request.user_id, plan_id)
+    )
+    return {
+        "ok": True,
+        "plan": plan,
+        "mode": session.mode,
+        "continuing": True,
+        "next_step": ready[0]["id"],
     }
 
 
@@ -1401,6 +1910,22 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "timestamp": _now(),
                             })
 
+                            if (
+                                event["type"] == "tool_call_result"
+                                and str(event.get("tool_name", "")).startswith("plan_")
+                            ):
+                                kit = session_manager.get_session(platform, user_id, KIT_AGENT_ID)
+                                plan = None
+                                if kit.active_plan_id:
+                                    plan = load_plan(
+                                        kit.active_plan_id, str(kit.agent.workspace_dir)
+                                    )
+                                if plan is None:
+                                    plan = latest_plan(str(kit.agent.workspace_dir))
+                                await _broadcast_plan_updated(
+                                    session_manager, platform, user_id, plan, kit.mode
+                                )
+
                             if event["type"] == "stream_end":
                                 assistant_content = event.get("content", "")
                                 assistant_msg_id = str(uuid.uuid4())
@@ -1415,6 +1940,13 @@ async def websocket_endpoint(websocket: WebSocket):
                                     "message_count": stats["message_count"] if stats else 0,
                                     "timestamp": _now(),
                                 })
+                    except asyncio.CancelledError:
+                        await websocket.send_json({
+                            "type": "stream_error",
+                            "session_id": session_id,
+                            "error": "Cancelled",
+                            "timestamp": _now(),
+                        })
                     except Exception as e:
                         await websocket.send_json({
                             "type": "stream_error",
