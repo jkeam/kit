@@ -886,12 +886,21 @@ class PersonalAssistant:
             return result[:MAX_TOOL_RESULT_CHARS] + f"\n[truncated — result was {len(result)} chars]"
         return result
 
-    async def chat(self, user_message: str, _delegation_depth: int = 0) -> str:
+    async def chat(
+        self,
+        user_message: str,
+        _delegation_depth: int = 0,
+        prior_messages: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
         """
         Send a message and get a complete response (non-streaming).
         """
         full_response = ""
-        async for event in self.chat_stream(user_message, _delegation_depth=_delegation_depth):
+        async for event in self.chat_stream(
+            user_message,
+            _delegation_depth=_delegation_depth,
+            prior_messages=prior_messages,
+        ):
             if event["type"] == "stream_end":
                 full_response = event["content"]
             elif event["type"] == "stream_error":
@@ -899,7 +908,10 @@ class PersonalAssistant:
         return full_response
 
     async def chat_stream(
-        self, user_message: str, _delegation_depth: int = 0
+        self,
+        user_message: str,
+        _delegation_depth: int = 0,
+        prior_messages: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Send a message and yield streaming events.
@@ -911,6 +923,10 @@ class PersonalAssistant:
             tool_call_result - tool finished {"tool_name": str, "result": str}
             stream_end    - done {"content": str}  (full assembled text)
             stream_error  - error {"error": str}
+
+        ``prior_messages``: optional override for multi-turn history. When set
+        (e.g. team/broadcast channel history), it replaces the agent's personal
+        session history from ``_prior_messages``.
         """
         self._current_delegation_depth = _delegation_depth
         terminal_plan_outputs: list[str] = []
@@ -940,7 +956,10 @@ class PersonalAssistant:
             messages: List[Dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
             ]
-            messages.extend(self._prior_messages(user_message))
+            if prior_messages is not None:
+                messages.extend(prior_messages)
+            else:
+                messages.extend(self._prior_messages(user_message))
             messages.append({"role": "user", "content": user_message})
 
             yield {"type": "stream_start"}

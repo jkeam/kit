@@ -352,20 +352,33 @@ class SessionManager:
         return signalled
 
     async def _run_and_track(
-        self, session: "Session", message: str, depth: int = 0
+        self,
+        session: "Session",
+        message: str,
+        depth: int = 0,
+        prior_messages: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """Run one turn on `session.agent`, updating live status (busy while
         running, idle when done, with a "what is it doing" description that
         gets more specific per tool call) and recording every tool-call
         event into the cross-agent activity feed - regardless of whether
-        the caller is a direct chat, a stream, or a delegated task."""
+        the caller is a direct chat, a stream, or a delegated task.
+
+        ``prior_messages`` overrides the agent's default session history
+        (used for team/broadcast turns whose history lives on a shared
+        broadcast session id, not the agent's personal DM thread).
+        """
         self.clear_cancel(session)
         task = asyncio.current_task()
         if task is not None:
             self.active_runs[session.session_id] = task
         await self._set_status(session.agent_id, "busy", _truncate(message), session.session_id)
         try:
-            async for event in session.agent.chat_stream(message, _delegation_depth=depth):
+            async for event in session.agent.chat_stream(
+                message,
+                _delegation_depth=depth,
+                prior_messages=prior_messages,
+            ):
                 if event["type"] in ("tool_call_start", "tool_call_result"):
                     await self._record({
                         "event_type": event["type"],
@@ -501,12 +514,18 @@ class SessionManager:
         session_id: str,
         current_user_message: Optional[str] = None,
         limit: int = 40,
+        *,
+        label_assistants: bool = False,
     ) -> List[Dict[str, str]]:
         """Prior user/assistant turns as OpenAI chat messages for the LLM.
 
         Skips meta roles (reactions). When ``current_user_message`` was already
         persisted as the trailing user entry (gateway saves before chat), that
         entry is omitted so the caller can append it once.
+
+        When ``label_assistants`` is True (team / broadcast channels), assistant
+        turns are prefixed with the speaker name so multi-agent threads stay
+        attributable in a single role=assistant stream.
         """
         # (role, display_content, raw_content) — raw used to detect a
         # already-persisted current turn without matching delegated prefixes.
@@ -522,6 +541,11 @@ class SessionManager:
             sender = msg.get("sender")
             if role == "user" and sender:
                 display = f"[Delegated from {sender}] {content}"
+            elif role == "assistant" and label_assistants:
+                aid = msg.get("agent_id") or KIT_AGENT_ID
+                defn = self.agent_registry.resolve(aid) if self.agent_registry else None
+                name = defn.name if defn else aid
+                display = f"{name}: {content}"
             entries.append((role, display, content))
 
         if (

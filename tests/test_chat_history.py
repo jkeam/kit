@@ -140,3 +140,77 @@ async def test_chat_stream_notifies_user_on_empty_reply(tmp_path):
         e["type"] == "text_delta" and EMPTY_REPLY_NOTICE in e.get("content", "")
         for e in events
     )
+
+
+def test_broadcast_history_labels_speakers(session_manager):
+    """Team channel history labels assistant turns so multi-agent threads stay clear."""
+    sid = "broadcast:web:browser"
+    session_manager.save_message(sid, "user", "@Kit write a joke telling app in ruby")
+    session_manager.save_message(
+        sid, "assistant", "CLI or web application?", agent_id="kit",
+    )
+    session_manager.save_message(sid, "user", "@Kit CLI")
+
+    hist = session_manager.get_llm_history(
+        sid, current_user_message="@Kit CLI", label_assistants=True,
+    )
+    assert hist == [
+        {"role": "user", "content": "@Kit write a joke telling app in ruby"},
+        {"role": "assistant", "content": "Kit: CLI or web application?"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_prior_messages_override_uses_team_history(session_manager):
+    """@-targeted team turns must send broadcast history, not the agent's DM log."""
+    broadcast_sid = "broadcast:web:browser"
+    session_manager.save_message(
+        broadcast_sid, "user", "@Kit write a joke telling app in ruby",
+    )
+    session_manager.save_message(
+        broadcast_sid, "assistant",
+        "CLI or web application?",
+        agent_id="kit",
+    )
+    session_manager.save_message(broadcast_sid, "user", "@Kit CLI")
+
+    # Unrelated DM history — must NOT leak into the team turn.
+    dm = session_manager.get_session("web", "browser", "kit")
+    session_manager.save_message(dm.session_id, "user", "unrelated DM topic")
+    session_manager.save_message(dm.session_id, "assistant", "DM reply")
+
+    history = session_manager.get_llm_history(
+        broadcast_sid,
+        current_user_message="@Kit CLI",
+        label_assistants=True,
+    )
+    agent = dm.agent
+    agent._max_context_tokens = 120_000
+
+    captured = []
+
+    class _CapturingCompletions(_FakeCompletions):
+        async def create(self, **kwargs):
+            captured.append(kwargs.get("messages", []))
+            return await super().create(**kwargs)
+
+    completions = _CapturingCompletions([_text_round("Building the Ruby CLI.")])
+    agent.client = _FakeClient(completions)
+
+    team_message = "[Team chat — directed at you]\n@Kit CLI"
+    events = []
+    async for event in agent.chat_stream(team_message, prior_messages=history):
+        events.append(event)
+
+    assert any(e["type"] == "stream_end" for e in events)
+    assert captured
+    roles_contents = [
+        (m["role"], m.get("content", ""))
+        for m in captured[0]
+        if m["role"] in ("user", "assistant")
+    ]
+    assert ("user", "@Kit write a joke telling app in ruby") in roles_contents
+    assert ("assistant", "Kit: CLI or web application?") in roles_contents
+    assert ("user", team_message) in roles_contents
+    assert all("unrelated DM topic" not in c for _, c in roles_contents)
+    assert all("DM reply" not in c for _, c in roles_contents)

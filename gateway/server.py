@@ -1614,25 +1614,15 @@ async def delete_skill(name: str):
     return {"message": result}
 
 
-def _format_broadcast_context(session_id: str, exclude_message_id: Optional[str] = None) -> str:
-    """Format recent broadcast history as a text block for agent context."""
-    messages = session_manager.get_messages(session_id)
-    lines = []
-    for msg in messages:
-        if msg.get("role") in ("reactions", "user_reactions"):
-            continue
-        if exclude_message_id and msg.get("message_id") == exclude_message_id:
-            continue
-        if msg["role"] == "user":
-            lines.append(f"User: {msg['content']}")
-        elif msg["role"] == "assistant":
-            aid = msg.get("agent_id", "kit")
-            defn = session_manager.agent_registry.resolve(aid)
-            name = defn.name if defn else aid
-            lines.append(f"{name}: {msg['content']}")
-    if not lines:
-        return ""
-    return "\n".join(lines[-30:])
+def _broadcast_llm_history(
+    session_id: str, current_user_message: Optional[str] = None
+) -> List[Dict[str, str]]:
+    """Prior team-channel turns as OpenAI chat messages (speaker-labeled)."""
+    return session_manager.get_llm_history(
+        session_id,
+        current_user_message=current_user_message,
+        label_assistants=True,
+    )
 
 
 async def _generate_targeted_broadcast_stream(
@@ -1640,24 +1630,22 @@ async def _generate_targeted_broadcast_stream(
     msg_id: str, platform: str, user_id: str,
 ):
     """Use the full agent pipeline (tools, knowledge, streaming) for
-    @-targeted broadcast replies.  Each targeted agent gets broadcast
-    history as context and can use all of its tools."""
-    context = _format_broadcast_context(session_id, exclude_message_id=msg_id)
+    @-targeted broadcast replies.  Each targeted agent gets prior team
+    turns as real multi-turn LLM history (same approach as DMs) and can
+    use all of its tools."""
+    # msg_id kept for call-site compatibility; history dedupes via content.
+    _ = msg_id
+    history = _broadcast_llm_history(session_id, current_user_message=message)
+    team_message = f"[Team chat — directed at you]\n{message}"
 
     for agent_id in target_agent_ids:
         try:
             session = session_manager.get_session(platform, user_id, agent_id)
-            augmented = message
-            if context:
-                augmented = (
-                    f"[Recent team chat history — all team members can see this]\n"
-                    f"{context}\n\n"
-                    f"[New message directed at you in team chat]\n"
-                    f"{message}"
-                )
 
             full_text = ""
-            async for event in session_manager._run_and_track(session, augmented):
+            async for event in session_manager._run_and_track(
+                session, team_message, prior_messages=history,
+            ):
                 await manager.broadcast({
                     **event,
                     "session_id": session_id,
@@ -1757,17 +1745,11 @@ async def _generate_broadcast_replies(message: str, session_id: str, target_agen
         if not agents:
             return
 
-        context = _format_broadcast_context(session_id)
+        history = _broadcast_llm_history(session_id, current_user_message=message)
 
         async def _reply(agent_defn):
             try:
                 soul = agent_defn.soul or "You are a helpful team member."
-                history_block = ""
-                if context:
-                    history_block = (
-                        "\n\nRecent team chat history (all members can see this):\n"
-                        f"{context}\n"
-                    )
                 system = (
                     f"Your name is {agent_defn.name}. "
                     f"Your role on the team: {agent_defn.description}\n\n"
@@ -1780,8 +1762,9 @@ async def _generate_broadcast_replies(message: str, session_id: str, target_agen
                     "delegates. A comedian cracks jokes. Do NOT give generic "
                     "helpful-assistant answers.\n"
                     "- Do NOT manage, delegate, or organize unless your role "
-                    "is specifically a manager."
-                    f"{history_block}"
+                    "is specifically a manager.\n"
+                    "- Prior turns above are the shared team thread "
+                    "(assistant lines are labeled by speaker)."
                 )
                 client, model, _ = session_manager.create_client_for_agent(agent_defn)
 
@@ -1789,6 +1772,7 @@ async def _generate_broadcast_replies(message: str, session_id: str, target_agen
                     model=model,
                     messages=[
                         {"role": "system", "content": system},
+                        *history,
                         {"role": "user", "content": message},
                     ],
                     stream=False,
