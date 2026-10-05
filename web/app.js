@@ -495,6 +495,10 @@ function looksLikePlanJson(text) {
     }
 }
 
+function planChannel() {
+    return currentMode === 'broadcast' ? 'broadcast' : 'dm';
+}
+
 async function capturePlanJsonBlob(text) {
     const response = await apiFetch(`${API_BASE}/plans/from-chat`, {
         method: 'POST',
@@ -504,6 +508,7 @@ async function capturePlanJsonBlob(text) {
             user_id: USER_ID,
             text,
             action: 'present',
+            channel: planChannel(),
         }),
     });
     const data = await response.json().catch(() => ({}));
@@ -522,7 +527,8 @@ function hasPendingPlan() {
 function maybeAttachPlanDraftActions(messageDiv, content, agentId) {
     if (!messageDiv || !content) return;
     if ((agentId || KIT_AGENT_ID) !== KIT_AGENT_ID && currentAgentId !== KIT_AGENT_ID) return;
-    if (currentMode !== 'dm') return;
+    // Draft approve/reject works in Kit DM and #team (Kit-only untargeted chat).
+    if (currentMode !== 'dm' && currentMode !== 'broadcast') return;
     if (!looksLikePlanDraft(content)) return;
     // If a real pending plan already exists, the dock has Approve/Revise.
     if (hasPendingPlan()) return;
@@ -600,6 +606,7 @@ function maybeAttachPlanDraftActions(messageDiv, content, agentId) {
                         user_id: USER_ID,
                         text,
                         action: apiAction,
+                        channel: planChannel(),
                     }),
                 });
                 const data = await response.json().catch(() => ({}));
@@ -793,16 +800,9 @@ async function sendMessage() {
                 addMessage(`Error: ${error.message}`, 'system');
             }
         }
-        if (targetAgentIds.length > 0) {
-            addThinkingIndicator();
-            startStreamTimeout();
-        } else {
-            messageCount++;
-            messageCountSpan.textContent = `${messageCount} messages`;
-            chatInput.disabled = false;
-            sendButton.disabled = false;
-            chatInput.focus();
-        }
+        // Kit (or @-mentioned agents) always stream a full reply.
+        addThinkingIndicator();
+        startStreamTimeout();
         return;
     }
 
@@ -925,7 +925,7 @@ async function selectBroadcastChannel(skipPush = false) {
     chatAvatar.style.background = '#5e40be';
     chatHeaderName.textContent = 'team';
     chatHeaderName.title = broadcastSessionId();
-    chatInput.placeholder = 'Broadcast to team… (use @ to mention someone)';
+    chatInput.placeholder = 'Message Kit… (use @ to mention someone else)';
     chatTargetStatusDot.classList.remove('idle', 'busy');
     chatTargetStatusDot.style.display = 'none';
     chatHeaderStatusText.textContent = '';
@@ -2513,7 +2513,7 @@ async function handlePlanAction(action, root) {
         return;
     }
 
-    const body = { platform: PLATFORM, user_id: USER_ID };
+    const body = { platform: PLATFORM, user_id: USER_ID, channel: planChannel() };
     let path = '';
     if (action === 'approve') path = `/plans/${encodeURIComponent(planId)}/approve`;
     else if (action === 'reject') path = `/plans/${encodeURIComponent(planId)}/reject`;
@@ -2559,7 +2559,12 @@ async function handlePlanAction(action, root) {
             const form = root.querySelector('.plan-revise-form');
             if (form) form.hidden = true;
             closeWorkspacePanel();
-            selectMember(KIT_AGENT_ID);
+            if (currentMode === 'broadcast') {
+                addThinkingIndicator();
+                startStreamTimeout();
+            } else {
+                selectMember(KIT_AGENT_ID);
+            }
         }
     } catch (err) {
         showPlanCardError(root, err.message || String(err));
@@ -4063,22 +4068,29 @@ function handleWebSocketMessage(data) {
             break;
 
         case 'user_message':
-            if (isOwnSession && data.sender) {
-                // A delegated instruction another agent placed into this
-                // thread - not the human, so it wasn't rendered locally yet.
-                addMessage(data.message, 'user', null, data.sender);
-            } else if (!isOwnSession) {
+            if (data.sender) {
+                // Delegation into a teammate's DM — never show as "You" in #team.
+                if (currentMode === 'broadcast') {
+                    break;
+                }
+                if (isOwnSession) {
+                    addMessage(data.message, 'user', null, data.sender);
+                }
+            } else if (!isOwnSession && currentMode !== 'broadcast') {
                 addMessage(`[${data.session_id}] ${data.message}`, 'user');
             }
             break;
 
         case 'assistant_message':
-            if (isOwnSession && (data.via_delegation || data.source === 'system_note')) {
+            if (currentMode === 'broadcast' && data.via_delegation) {
+                // Teammate reply from plan delegation — attribute to them, not Kit.
+                addMessage(data.message, 'assistant', null, null, data.agent_id || null);
+            } else if (isOwnSession && (data.via_delegation || data.source === 'system_note')) {
                 // Delegated replies and plan-drive notes have no stream_end
                 // on this tab — show them. Normal chat already rendered via
                 // stream_end, so bare assistant_message is ignored here.
                 addMessage(data.message, 'assistant', null, null, data.agent_id || null);
-            } else if (!isOwnSession) {
+            } else if (!isOwnSession && currentMode !== 'broadcast') {
                 addMessage(`[${data.session_id}] ${data.message}`, 'assistant');
             }
             break;

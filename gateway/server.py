@@ -168,6 +168,8 @@ class PlanActionRequest(BaseModel):
     user_id: str = "anonymous"
     reason: Optional[str] = None
     feedback: Optional[str] = None
+    # Where progress notes / revise turns should appear in the UI.
+    channel: Literal["dm", "broadcast"] = "dm"
 
 
 class PlanFromChatRequest(BaseModel):
@@ -177,6 +179,7 @@ class PlanFromChatRequest(BaseModel):
     text: str
     action: Literal["present", "approve", "reject"] = "present"
     reason: Optional[str] = None
+    channel: Literal["dm", "broadcast"] = "dm"
 
 
 # Global session manager (initialized on startup)
@@ -452,7 +455,8 @@ def _broadcast_session_id(platform: str, user_id: str) -> str:
 
 @app.post("/broadcast", dependencies=[Depends(_require_gateway_token)])
 async def broadcast_message(request: BroadcastRequest):
-    """Post a broadcast message visible to all agents."""
+    """Post a team-channel message. Untargeted messages go to Kit only;
+    @-mentions route to the named agents."""
     if not session_manager:
         raise HTTPException(status_code=500, detail="Session manager not initialized")
 
@@ -475,14 +479,11 @@ async def broadcast_message(request: BroadcastRequest):
         "timestamp": _now(),
     })
 
-    if request.target_agent_ids:
-        asyncio.create_task(_generate_targeted_broadcast_stream(
-            request.message, session_id, request.target_agent_ids,
-            msg_id, request.platform, request.user_id,
-        ))
-    else:
-        asyncio.create_task(_generate_broadcast_reactions(request.message, msg_id, session_id))
-        asyncio.create_task(_generate_broadcast_replies(request.message, session_id))
+    targets = request.target_agent_ids or [KIT_AGENT_ID]
+    asyncio.create_task(_generate_targeted_broadcast_stream(
+        request.message, session_id, targets,
+        msg_id, request.platform, request.user_id,
+    ))
 
     return {"status": "ok", "session_id": session_id}
 
@@ -560,11 +561,39 @@ async def _broadcast_plan_updated(
     })
 
 
-async def _kick_kit_turn(platform: str, user_id: str, message: str) -> None:
+def _plan_ui_session_id(platform: str, user_id: str, channel: str = "dm") -> str:
+    """Session id where plan progress should appear (Kit DM or team chat)."""
+    if channel == "broadcast":
+        return _broadcast_session_id(platform, user_id)
+    return make_session_id(platform, user_id, KIT_AGENT_ID)
+
+
+async def _kick_kit_turn(
+    platform: str, user_id: str, message: str, *, channel: str = "dm"
+) -> None:
     """Run a synthetic Kit chat turn and fan out stream events over WS."""
     sm = session_manager
     if not sm:
         return
+
+    # Team-chat revise/approve follow-ups stay in #team (same stream path as @Kit).
+    if channel == "broadcast":
+        session_id = _broadcast_session_id(platform, user_id)
+        msg_id = str(uuid.uuid4())
+        sm.save_message(session_id, "user", message, message_id=msg_id)
+        await manager.broadcast({
+            "type": "user_message",
+            "session_id": session_id,
+            "platform": platform,
+            "message": message,
+            "message_id": msg_id,
+            "timestamp": _now(),
+        })
+        await _generate_targeted_broadcast_stream(
+            message, session_id, [KIT_AGENT_ID], msg_id, platform, user_id,
+        )
+        return
+
     session_id = make_session_id(platform, user_id, KIT_AGENT_ID)
     msg_id = str(uuid.uuid4())
     sm.save_message(session_id, "user", message, message_id=msg_id)
@@ -684,7 +713,9 @@ async def approve_plan(plan_id: str, request: PlanActionRequest):
     await _broadcast_plan_updated(sm, request.platform, request.user_id, plan, session.mode)
     # Drive steps in-process — gpt-oss often won't call agent_delegate reliably.
     asyncio.create_task(
-        _drive_plan_steps(sm, request.platform, request.user_id, plan_id)
+        _drive_plan_steps(
+            sm, request.platform, request.user_id, plan_id, channel=request.channel,
+        )
     )
     return {"ok": True, "plan": plan, "mode": session.mode}
 
@@ -724,7 +755,11 @@ async def revise_plan(plan_id: str, request: PlanActionRequest):
         f"Revise the plan `{plan_id}` based on this feedback, then call plan_revise "
         f"and show the updated plan. Feedback: {feedback}"
     )
-    asyncio.create_task(_kick_kit_turn(request.platform, request.user_id, msg))
+    asyncio.create_task(
+        _kick_kit_turn(
+            request.platform, request.user_id, msg, channel=request.channel,
+        )
+    )
     return {"ok": True, "plan": plan, "mode": session.mode, "revising": True}
 
 
@@ -744,7 +779,9 @@ async def cancel_plan(plan_id: str, request: PlanActionRequest):
     await _broadcast_plan_updated(sm, request.platform, request.user_id, plan, session.mode)
     await manager.broadcast({
         "type": "stream_error",
-        "session_id": make_session_id(request.platform, request.user_id, KIT_AGENT_ID),
+        "session_id": _plan_ui_session_id(
+            request.platform, request.user_id, request.channel,
+        ),
         "error": "Cancelled",
         "timestamp": _now(),
     })
@@ -752,11 +789,16 @@ async def cancel_plan(plan_id: str, request: PlanActionRequest):
 
 
 async def _post_kit_system_note(
-    sm: SessionManager, platform: str, user_id: str, text: str
+    sm: SessionManager,
+    platform: str,
+    user_id: str,
+    text: str,
+    *,
+    channel: str = "dm",
 ) -> None:
     """Persist + broadcast a Kit assistant note (progress without an LLM turn)."""
-    session_id = make_session_id(platform, user_id, KIT_AGENT_ID)
-    sm.save_message(session_id, "assistant", text)
+    session_id = _plan_ui_session_id(platform, user_id, channel)
+    sm.save_message(session_id, "assistant", text, agent_id=KIT_AGENT_ID)
     await manager.broadcast({
         "type": "assistant_message",
         "session_id": session_id,
@@ -777,6 +819,7 @@ async def _drive_plan_steps(
     plan_id: str,
     *,
     max_steps: int = 20,
+    channel: str = "dm",
 ) -> None:
     """Deterministically run ready plan steps via agent_delegate (no Kit LLM).
 
@@ -790,12 +833,14 @@ async def _drive_plan_steps(
     await _post_kit_system_note(
         sm, platform, user_id,
         f"Approved — starting work on plan `{plan_id}`.",
+        channel=channel,
     )
 
     for _ in range(max_steps):
         if session.cancel_requested.is_set():
             await _post_kit_system_note(
-                sm, platform, user_id, "Plan drive stopped (cancelled)."
+                sm, platform, user_id, "Plan drive stopped (cancelled).",
+                channel=channel,
             )
             break
 
@@ -825,12 +870,14 @@ async def _drive_plan_steps(
                 await _post_kit_system_note(
                     sm, platform, user_id,
                     f"Plan `{plan_id}` completed — all steps done.",
+                    channel=channel,
                 )
             else:
                 await _post_kit_system_note(
                     sm, platform, user_id,
                     "No step is ready to run (waiting on other steps or a teammate). "
                     "Reply in chat, or click Resume if work should continue.",
+                    channel=channel,
                 )
             break
 
@@ -853,6 +900,7 @@ async def _drive_plan_steps(
         await _post_kit_system_note(
             sm, platform, user_id,
             f"Running step `{step_id}` → **{agent_id}**: {step.get('action', '')}",
+            channel=channel,
         )
 
         try:
@@ -893,9 +941,10 @@ async def _drive_plan_steps(
         if len(body) > 4000:
             body = body[:3997] + "…"
         note = f"Step `{step_id}` → **{status}**."
-        if body:
+        # In #team, the delegated teammate's reply is shown separately.
+        if body and channel != "broadcast":
             note = f"{note}\n\n{body}"
-        await _post_kit_system_note(sm, platform, user_id, note)
+        await _post_kit_system_note(sm, platform, user_id, note, channel=channel)
 
         if status == "failed" or (plan and plan.get("status") in ("failed", "blocked", "cancelled")):
             break
@@ -947,6 +996,7 @@ async def plan_from_chat(request: PlanFromChatRequest):
         await _post_kit_system_note(
             sm, request.platform, request.user_id,
             f"Plan `{plan['id']}` rejected.",
+            channel=request.channel,
         )
         return {"ok": True, "plan": plan, "mode": session.mode}
 
@@ -960,9 +1010,13 @@ async def plan_from_chat(request: PlanFromChatRequest):
         await _post_kit_system_note(
             sm, request.platform, request.user_id,
             f"Plan `{plan['id']}` approved — running ready steps.",
+            channel=request.channel,
         )
         asyncio.create_task(
-            _drive_plan_steps(sm, request.platform, request.user_id, plan["id"])
+            _drive_plan_steps(
+                sm, request.platform, request.user_id, plan["id"],
+                channel=request.channel,
+            )
         )
         return {"ok": True, "plan": plan, "mode": session.mode, "approved": True}
 
@@ -971,6 +1025,7 @@ async def plan_from_chat(request: PlanFromChatRequest):
     await _post_kit_system_note(
         sm, request.platform, request.user_id,
         f"Plan `{plan['id']}` saved. Use the plan dock to Approve, Revise, or Reject.",
+        channel=request.channel,
     )
     return {"ok": True, "plan": plan, "mode": session.mode, "presented": True}
 
@@ -1004,7 +1059,9 @@ async def continue_plan(plan_id: str, request: PlanActionRequest):
             "message": "No ready steps (waiting on dependencies or clarification)",
         }
     asyncio.create_task(
-        _drive_plan_steps(sm, request.platform, request.user_id, plan_id)
+        _drive_plan_steps(
+            sm, request.platform, request.user_id, plan_id, channel=request.channel,
+        )
     )
     return {
         "ok": True,
@@ -1684,6 +1741,21 @@ async def _generate_targeted_broadcast_stream(
                     "agent_id": agent_id,
                     "timestamp": _now(),
                 })
+                if (
+                    event["type"] == "tool_call_result"
+                    and str(event.get("tool_name", "")).startswith("plan_")
+                ):
+                    kit = session_manager.get_session(platform, user_id, KIT_AGENT_ID)
+                    plan = None
+                    if kit.active_plan_id:
+                        plan = load_plan(
+                            kit.active_plan_id, str(kit.agent.workspace_dir)
+                        )
+                    if plan is None:
+                        plan = latest_plan(str(kit.agent.workspace_dir))
+                    await _broadcast_plan_updated(
+                        session_manager, platform, user_id, plan, kit.mode
+                    )
                 if event["type"] == "stream_end":
                     full_text = event.get("content", "")
 
@@ -2045,13 +2117,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         "timestamp": _now(),
                     })
 
-                    if target_agent_ids:
-                        asyncio.create_task(_generate_targeted_broadcast_stream(
-                            user_msg, session_id, target_agent_ids, msg_id, platform, user_id,
-                        ))
-                    else:
-                        asyncio.create_task(_generate_broadcast_reactions(user_msg, msg_id, session_id))
-                        asyncio.create_task(_generate_broadcast_replies(user_msg, session_id))
+                    targets = target_agent_ids or [KIT_AGENT_ID]
+                    asyncio.create_task(_generate_targeted_broadcast_stream(
+                        user_msg, session_id, targets, msg_id, platform, user_id,
+                    ))
 
             except json.JSONDecodeError:
                 await websocket.send_json({
