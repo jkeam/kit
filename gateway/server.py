@@ -1625,6 +1625,38 @@ def _broadcast_llm_history(
     )
 
 
+def _parse_broadcast_session_id(session_id: str) -> tuple[str, str]:
+    """Split `broadcast:{platform}:{user_id}` into (platform, user_id)."""
+    if session_id.startswith("broadcast:"):
+        rest = session_id[len("broadcast:"):]
+        platform, _, user_id = rest.partition(":")
+        if platform and user_id:
+            return platform, user_id
+    return "web", "anonymous"
+
+
+def _prepare_broadcast_reply_text(text: Optional[str]) -> tuple[str, bool]:
+    """Clean a short team-chat reply; flag Harmony tool calls for escalation.
+
+    Untargeted Team replies call the LLM without tools. gpt-oss models often
+    still emit Harmony markup (e.g. plan_present). Never show those tokens;
+    escalate so the full agent pipeline can run the tool call.
+    """
+    from runtime.agent import _clean_assistant_text
+    from runtime.harmony import looks_like_harmony, parse_harmony_content
+
+    raw = (text or "").strip()
+    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+    if not raw:
+        return "", False
+    if looks_like_harmony(raw):
+        visible, calls = parse_harmony_content(raw)
+        if calls:
+            return "", True
+        return visible.strip(), False
+    return _clean_assistant_text(raw), False
+
+
 async def _generate_targeted_broadcast_stream(
     message: str, session_id: str, target_agent_ids: List[str],
     msg_id: str, platform: str, user_id: str,
@@ -1746,8 +1778,11 @@ async def _generate_broadcast_replies(message: str, session_id: str, target_agen
             return
 
         history = _broadcast_llm_history(session_id, current_user_message=message)
+        escalate_ids: List[str] = []
+        platform, user_id = _parse_broadcast_session_id(session_id)
 
-        async def _reply(agent_defn):
+        async def _reply(agent_defn) -> Optional[str]:
+            """Return agent_id when the model tried to tool-call (escalate)."""
             try:
                 soul = agent_defn.soul or "You are a helpful team member."
                 system = (
@@ -1763,6 +1798,7 @@ async def _generate_broadcast_replies(message: str, session_id: str, target_agen
                     "helpful-assistant answers.\n"
                     "- Do NOT manage, delegate, or organize unless your role "
                     "is specifically a manager.\n"
+                    "- Do NOT emit tool-call markup or JSON plans — plain chat only.\n"
                     "- Prior turns above are the shared team thread "
                     "(assistant lines are labeled by speaker)."
                 )
@@ -1778,10 +1814,12 @@ async def _generate_broadcast_replies(message: str, session_id: str, target_agen
                     stream=False,
                 )
 
-                text = response.choices[0].message.content.strip()
-                text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+                content = getattr(response.choices[0].message, "content", None) or ""
+                text, escalate = _prepare_broadcast_reply_text(content)
+                if escalate:
+                    return agent_defn.id
                 if not text:
-                    return
+                    return None
 
                 session_manager.save_message(
                     session_id, "assistant", text, agent_id=agent_defn.id
@@ -1796,12 +1834,23 @@ async def _generate_broadcast_replies(message: str, session_id: str, target_agen
                 })
             except Exception as e:
                 print(f"Warning: Agent {agent_defn.id} failed to reply to broadcast: {e}")
+            return None
 
         order = list(agents)
         random.shuffle(order)
         for agent_defn in order:
             await asyncio.sleep(random.uniform(0.2, 1.0))
-            await _reply(agent_defn)
+            escalate_id = await _reply(agent_defn)
+            if escalate_id:
+                escalate_ids.append(escalate_id)
+
+        # gpt-oss tried to call tools (often plan_present) in the no-tools
+        # short-reply path — re-run those agents through the full pipeline.
+        if escalate_ids:
+            await _generate_targeted_broadcast_stream(
+                message, session_id, escalate_ids,
+                str(uuid.uuid4()), platform, user_id,
+            )
     except Exception as e:
         print(f"Warning: Failed to generate broadcast replies: {e}")
 
